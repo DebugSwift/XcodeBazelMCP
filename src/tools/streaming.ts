@@ -21,6 +21,7 @@ import {
   testFilterArgs,
 } from '../core/bazel.js';
 import { bootSimulatorIfNeeded, findAppBundle, installApp, launchApp, readBundleId, resolveSimulator } from '../core/simulators.js';
+import { withTestSimulatorHooks } from '../core/test-simulator.js';
 import { installAppOnDevice, launchAppOnDevice, resolveDevice } from '../core/devices.js';
 import { swiftBuildStreaming, swiftTestStreaming, type SwiftBuildConfiguration } from '../core/swift-package.js';
 import { getConfig } from '../runtime/config.js';
@@ -79,17 +80,37 @@ export async function callBazelToolStreaming(
   const defaultTimeout = buildLike.includes(name) ? 1_800 : 600;
   const timeout = numberOrUndefined(args.timeoutSeconds) || defaultTimeout;
 
-  let finalResult: CommandResult | undefined;
-  for await (const chunk of runBazelStreaming(bazelArgs, timeout, startupArgs)) {
-    if ('stream' in chunk) {
-      onProgress(chunk.data);
-    } else {
-      finalResult = chunk;
+  const runStreaming = async (): Promise<CommandResult> => {
+    let finalResult: CommandResult | undefined;
+    for await (const chunk of runBazelStreaming(bazelArgs, timeout, startupArgs)) {
+      if ('stream' in chunk) {
+        onProgress(chunk.data);
+      } else {
+        finalResult = chunk;
+      }
     }
-  }
+    if (!finalResult) {
+      throw new Error('Command produced no result.');
+    }
+    return finalResult;
+  };
 
-  if (!finalResult) {
-    return toolText('Command produced no result.', true);
+  let finalResult: CommandResult;
+  let cleanupSummary: string | undefined;
+  if (name === 'bazel_ios_test') {
+    try {
+      const wrapped = await withTestSimulatorHooks(args as TestArgs, runStreaming);
+      finalResult = wrapped.result;
+      cleanupSummary = wrapped.cleanupSummary;
+    } catch (err) {
+      return toolText((err as Error).message, true);
+    }
+  } else {
+    try {
+      finalResult = await runStreaming();
+    } catch (err) {
+      return toolText((err as Error).message, true);
+    }
   }
 
   if (name === 'bazel_ios_build_and_run' && finalResult.exitCode === 0) {
@@ -100,7 +121,10 @@ export async function callBazelToolStreaming(
     return handleDeviceBuildAndRunPostBuild(args as BuildArgs, finalResult);
   }
 
-  return toolText(formatCommandResult(finalResult), finalResult.exitCode !== 0);
+  const output = cleanupSummary
+    ? `${formatCommandResult(finalResult)}\n\n${cleanupSummary}`
+    : formatCommandResult(finalResult);
+  return toolText(output, finalResult.exitCode !== 0);
 }
 
 async function streamSwiftPackageTool(

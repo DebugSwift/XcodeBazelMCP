@@ -191,6 +191,14 @@ export async function shutdownAllSimulators(): Promise<CommandResult> {
   });
 }
 
+export async function deleteSimulator(udid: string): Promise<CommandResult> {
+  return runCommand('xcrun', ['simctl', 'delete', udid], {
+    cwd: process.cwd(),
+    timeoutSeconds: 30,
+    maxOutput: 50_000,
+  });
+}
+
 export async function eraseSimulator(udid: string): Promise<CommandResult> {
   return runCommand('xcrun', ['simctl', 'erase', udid], {
     cwd: process.cwd(),

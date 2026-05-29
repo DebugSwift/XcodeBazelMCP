@@ -18,8 +18,8 @@ Build & Run:
   xcodebazelmcp install <path/to/App.app> [--simulator-id <UDID>]
   xcodebazelmcp launch <bundleId> [--simulator-id <UDID>] [--launch-arg ...]
   xcodebazelmcp stop <bundleId> [--simulator-name "..."]
-  xcodebazelmcp test <target> [--filter XCTestFilter] [--stream]
-  xcodebazelmcp coverage <target> [--filter XCTestFilter]
+  xcodebazelmcp test <target> [--filter XCTestFilter] [--minimize-simulator] [--shutdown-simulator] [--stream]
+  xcodebazelmcp coverage <target> [--filter XCTestFilter] [--minimize-simulator] [--shutdown-simulator]
   xcodebazelmcp clean [--expunge] [--stream]
   xcodebazelmcp app-path <target>
   xcodebazelmcp bundle-id <path/to/App.app | //target>

@@ -203,6 +203,8 @@ export function parseTest(args: string[]): TestArgs {
     else if (arg === '--arg') parsed.extraArgs = append(parsed.extraArgs, args[++index]);
     else if (arg === '--startup-arg') parsed.startupArgs = append(parsed.startupArgs, args[++index]);
     else if (arg === '--stream') (parsed as JsonObject).streaming = true;
+    else if (arg === '--minimize-simulator') parsed.minimizeSimulator = true;
+    else if (arg === '--shutdown-simulator') parsed.shutdownSimulatorAfterTest = true;
   }
   return parsed;
 }

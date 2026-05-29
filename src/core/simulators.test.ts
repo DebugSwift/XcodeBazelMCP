@@ -7,6 +7,7 @@ import {
   bootSimulator,
   bootSimulatorIfNeeded,
   clearStatusBar,
+  deleteSimulator,
   eraseSimulator,
   findAppBundle,
   getSimulatorUiState,
@@ -374,6 +375,18 @@ describe('shutdownAllSimulators', () => {
     expect(mockRunCommand).toHaveBeenCalledWith('xcrun', ['simctl', 'shutdown', 'all'], {
       cwd: process.cwd(),
       timeoutSeconds: 60,
+      maxOutput: 50_000,
+    });
+  });
+});
+
+describe('deleteSimulator', () => {
+  it('calls xcrun simctl delete', async () => {
+    mockRunCommand.mockResolvedValue(mockSuccess);
+    await deleteSimulator('ABC-123');
+    expect(mockRunCommand).toHaveBeenCalledWith('xcrun', ['simctl', 'delete', 'ABC-123'], {
+      cwd: process.cwd(),
+      timeoutSeconds: 30,
       maxOutput: 50_000,
     });
   });

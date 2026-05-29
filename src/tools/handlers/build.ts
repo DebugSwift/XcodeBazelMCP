@@ -11,6 +11,7 @@ import {
   simulatorArgs,
   testFilterArgs,
 } from '../../core/bazel.js';
+import { withTestSimulatorHooks } from '../../core/test-simulator.js';
 import {
   bootSimulatorIfNeeded,
   findAppBundle,
@@ -145,6 +146,14 @@ export const definitions: ToolDefinition[] = [
         extraArgs: { type: 'array', items: { type: 'string' } },
         timeoutSeconds: { type: 'number' },
         streaming: { type: 'boolean', description: 'Stream test output incrementally via progress notifications.' },
+        minimizeSimulator: {
+          type: 'boolean',
+          description: 'Minimize Simulator.app windows while the test runs.',
+        },
+        shutdownSimulatorAfterTest: {
+          type: 'boolean',
+          description: 'Shutdown simulators opened for the test when it finishes (deletes BAZEL_TEST_* simulators).',
+        },
       },
       required: ['target'],
     },
@@ -259,6 +268,14 @@ export const definitions: ToolDefinition[] = [
         startupArgs: { type: 'array', items: { type: 'string' } },
         extraArgs: { type: 'array', items: { type: 'string' } },
         timeoutSeconds: { type: 'number' },
+        minimizeSimulator: {
+          type: 'boolean',
+          description: 'Minimize Simulator.app windows while the test runs.',
+        },
+        shutdownSimulatorAfterTest: {
+          type: 'boolean',
+          description: 'Shutdown simulators opened for the test when it finishes (deletes BAZEL_TEST_* simulators).',
+        },
       },
       required: ['target'],
     },
@@ -369,13 +386,18 @@ export async function handle(name: string, args: JsonObject): Promise<ToolCallRe
         ...testFilterArgs(testArgs.testFilter),
       ];
       bazelArgs.push(target);
-      const commandResult = await runBazel(
-        bazelArgs,
-        numberOrUndefined(testArgs.timeoutSeconds) || 1_800,
-        asStringArray(testArgs.startupArgs, 'startupArgs'),
+      const { result: commandResult, cleanupSummary } = await withTestSimulatorHooks(testArgs, () =>
+        runBazel(
+          bazelArgs,
+          numberOrUndefined(testArgs.timeoutSeconds) || 1_800,
+          asStringArray(testArgs.startupArgs, 'startupArgs'),
+        ),
       );
+      const output = cleanupSummary
+        ? `${formatCommandResult(commandResult)}\n\n${cleanupSummary}`
+        : formatCommandResult(commandResult);
       return toolResult(
-        formatCommandResult(commandResult),
+        output,
         { ...structuredCommandResult(commandResult), target, testFilter: testArgs.testFilter },
         commandResult.exitCode !== 0,
       );
@@ -462,10 +484,12 @@ export async function handle(name: string, args: JsonObject): Promise<ToolCallRe
         ...testFilterArgs(testArgs.testFilter),
       ];
       bazelArgs.push(target);
-      const commandResult = await runBazel(
-        bazelArgs,
-        numberOrUndefined(testArgs.timeoutSeconds) || 1_800,
-        asStringArray(testArgs.startupArgs, 'startupArgs'),
+      const { result: commandResult, cleanupSummary } = await withTestSimulatorHooks(testArgs, () =>
+        runBazel(
+          bazelArgs,
+          numberOrUndefined(testArgs.timeoutSeconds) || 1_800,
+          asStringArray(testArgs.startupArgs, 'startupArgs'),
+        ),
       );
 
       const coverageSummary: string[] = [formatCommandResult(commandResult)];
@@ -489,6 +513,9 @@ export async function handle(name: string, args: JsonObject): Promise<ToolCallRe
         } else {
           coverageSummary.push('', 'Coverage report not found. The target may not produce coverage data.');
         }
+      }
+      if (cleanupSummary) {
+        coverageSummary.push('', cleanupSummary);
       }
       return toolText(coverageSummary.join('\n'), commandResult.exitCode !== 0);
     }

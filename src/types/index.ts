@@ -97,6 +97,8 @@ export interface TestArgs extends JsonObject {
   configs?: string[];
   extraArgs?: string[];
   timeoutSeconds?: number;
+  minimizeSimulator?: boolean;
+  shutdownSimulatorAfterTest?: boolean;
 }
 
 export interface QueryArgs extends JsonObject {
