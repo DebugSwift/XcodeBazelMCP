@@ -32,6 +32,7 @@ import type {
 } from '../../types/index.js';
 import { formatCommandResult, structuredCommandResult, toolResult, toolText } from '../../utils/output.js';
 import { numberOrUndefined, prependWarning, resolveSimulatorFromArgs, stringOrUndefined } from '../helpers.js';
+import { STREAMING_PROPERTY } from '../schema-constants.js';
 
 interface LcovFile { name: string; total: number; covered: number }
 
@@ -92,7 +93,7 @@ export const definitions: ToolDefinition[] = [
         startupArgs: { type: 'array', items: { type: 'string' } },
         extraArgs: { type: 'array', items: { type: 'string' } },
         timeoutSeconds: { type: 'number' },
-        streaming: { type: 'boolean', description: 'Stream build output incrementally via progress notifications.' },
+        streaming: STREAMING_PROPERTY,
       },
       required: ['target'],
     },
@@ -126,7 +127,7 @@ export const definitions: ToolDefinition[] = [
           description: 'Environment variables injected into the launched app.',
         },
         timeoutSeconds: { type: 'number' },
-        streaming: { type: 'boolean', description: 'Stream build output incrementally via progress notifications.' },
+        streaming: STREAMING_PROPERTY,
       },
       required: ['target'],
     },
@@ -145,7 +146,7 @@ export const definitions: ToolDefinition[] = [
         startupArgs: { type: 'array', items: { type: 'string' } },
         extraArgs: { type: 'array', items: { type: 'string' } },
         timeoutSeconds: { type: 'number' },
-        streaming: { type: 'boolean', description: 'Stream test output incrementally via progress notifications.' },
+        streaming: STREAMING_PROPERTY,
         minimizeSimulator: {
           type: 'boolean',
           description: 'Minimize Simulator.app windows while the test runs.',
@@ -222,7 +223,7 @@ export const definitions: ToolDefinition[] = [
       properties: {
         expunge: { type: 'boolean', description: 'Remove entire output base (bazel clean --expunge).' },
         startupArgs: { type: 'array', items: { type: 'string' } },
-        streaming: { type: 'boolean', description: 'Stream output incrementally via progress notifications.' },
+        streaming: STREAMING_PROPERTY,
       },
     },
   },

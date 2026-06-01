@@ -46,50 +46,50 @@ describe('prependWarning', () => {
 describe('applyDefaults', () => {
   afterEach(() => clearDefaults());
 
-  it('returns args unchanged when no defaults set', () => {
+  it('returns args with streaming=false when no defaults set', () => {
     clearDefaults();
     const args = { target: '//app' };
-    expect(applyDefaults(args)).toEqual({ target: '//app' });
+    expect(applyDefaults(args)).toEqual({ target: '//app', streaming: false });
   });
 
   it('merges target default when args.target is undefined', () => {
     setDefaults({ target: '//default' });
-    expect(applyDefaults({})).toEqual({ target: '//default' });
+    expect(applyDefaults({})).toEqual({ target: '//default', streaming: false });
   });
 
   it('does NOT override explicitly provided target', () => {
     setDefaults({ target: '//default' });
-    expect(applyDefaults({ target: '//explicit' })).toEqual({ target: '//explicit' });
+    expect(applyDefaults({ target: '//explicit' })).toEqual({ target: '//explicit', streaming: false });
   });
 
   it('merges simulatorName', () => {
     setDefaults({ simulatorName: 'iPhone 15' });
-    expect(applyDefaults({})).toEqual({ simulatorName: 'iPhone 15' });
+    expect(applyDefaults({})).toEqual({ simulatorName: 'iPhone 15', streaming: false });
   });
 
   it('merges simulatorId', () => {
     setDefaults({ simulatorId: 'ABC-123' });
-    expect(applyDefaults({})).toEqual({ simulatorId: 'ABC-123' });
+    expect(applyDefaults({})).toEqual({ simulatorId: 'ABC-123', streaming: false });
   });
 
   it('merges buildMode', () => {
     setDefaults({ buildMode: 'debug' });
-    expect(applyDefaults({})).toEqual({ buildMode: 'debug' });
+    expect(applyDefaults({})).toEqual({ buildMode: 'debug', streaming: false });
   });
 
   it('merges platform', () => {
     setDefaults({ platform: 'simulator' });
-    expect(applyDefaults({})).toEqual({ platform: 'simulator' });
+    expect(applyDefaults({})).toEqual({ platform: 'simulator', streaming: false });
   });
 
   it('does NOT merge buildMode=none', () => {
     setDefaults({ buildMode: 'none' });
-    expect(applyDefaults({})).toEqual({});
+    expect(applyDefaults({})).toEqual({ streaming: false });
   });
 
   it('does NOT merge platform=none', () => {
     setDefaults({ platform: 'none' });
-    expect(applyDefaults({})).toEqual({});
+    expect(applyDefaults({})).toEqual({ streaming: false });
   });
 
   it('handles multiple defaults at once', () => {
@@ -99,7 +99,18 @@ describe('applyDefaults', () => {
       simulatorName: 'iPhone 15',
       buildMode: 'debug',
       platform: 'simulator',
+      streaming: false,
     });
+  });
+
+  it('merges streaming default from session', () => {
+    setDefaults({ streaming: true });
+    expect(applyDefaults({})).toEqual({ streaming: true });
+  });
+
+  it('does NOT override explicitly provided streaming', () => {
+    setDefaults({ streaming: true });
+    expect(applyDefaults({ streaming: false })).toEqual({ streaming: false });
   });
 });
 

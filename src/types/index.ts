@@ -24,6 +24,7 @@ export interface SessionDefaults {
   simulatorId?: string;
   buildMode?: BuildMode;
   platform?: BuildPlatform;
+  streaming?: boolean;
 }
 
 export interface ProfileConfig {
@@ -32,6 +33,7 @@ export interface ProfileConfig {
   defaultSimulatorId?: string;
   defaultBuildMode?: BuildMode;
   defaultPlatform?: BuildPlatform;
+  streaming?: boolean;
 }
 
 export interface FileConfig {
@@ -42,6 +44,7 @@ export interface FileConfig {
   defaultPlatform?: BuildPlatform;
   defaultBuildMode?: BuildMode;
   defaultTarget?: string;
+  defaultStreaming?: boolean;
   profiles?: Record<string, ProfileConfig>;
   enabledWorkflows?: string[];
 }

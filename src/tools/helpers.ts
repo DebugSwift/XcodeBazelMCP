@@ -15,13 +15,13 @@ export const deviceLogCaptures = new Map<string, { child: ReturnType<typeof spaw
 
 export function applyDefaults(args: JsonObject): JsonObject {
   const defaults = getDefaults();
-  if (!defaults || Object.keys(defaults).length === 0) return args;
   const merged = { ...args };
   if (defaults.target && merged.target === undefined) merged.target = defaults.target;
   if (defaults.simulatorName && merged.simulatorName === undefined) merged.simulatorName = defaults.simulatorName;
   if (defaults.simulatorId && merged.simulatorId === undefined) merged.simulatorId = defaults.simulatorId;
   if (defaults.buildMode && defaults.buildMode !== 'none' && merged.buildMode === undefined) merged.buildMode = defaults.buildMode;
   if (defaults.platform && defaults.platform !== 'none' && merged.platform === undefined) merged.platform = defaults.platform;
+  if (merged.streaming === undefined) merged.streaming = defaults.streaming ?? false;
   return merged;
 }
 
@@ -43,5 +43,9 @@ export function stringOrUndefined(value: unknown): string | undefined {
 
 export function numberOrUndefined(value: unknown): number | undefined {
   return typeof value === 'number' ? value : undefined;
+}
+
+export function booleanOrUndefined(value: unknown): boolean | undefined {
+  return typeof value === 'boolean' ? value : undefined;
 }
 

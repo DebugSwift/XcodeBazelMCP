@@ -4,7 +4,7 @@ Status: **Implemented**
 
 ## Overview
 
-Long-running Bazel commands (build, test, query, clean) can stream stdout/stderr incrementally instead of buffering the entire output until completion. This gives agents and CLI users real-time feedback on build progress.
+Long-running Bazel commands (build, test, query, clean) can stream stdout/stderr incrementally instead of buffering the entire output until completion. **Streaming is off by default** (`streaming: false`) to keep MCP tool responses compact. Opt in with `streaming: true` when you want live progress notifications.
 
 ## Supported Tools
 
@@ -18,7 +18,7 @@ Long-running Bazel commands (build, test, query, clean) can stream stdout/stderr
 
 ## MCP Protocol
 
-Set `streaming: true` in the tool arguments and include a `_meta.progressToken` in the request:
+Set `streaming: true` in the tool arguments (or via `bazel_ios_set_defaults`) and include a `_meta.progressToken` in the request:
 
 ```json
 {

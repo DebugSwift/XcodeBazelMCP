@@ -81,6 +81,7 @@ export function activateProfile(name: string): SessionDefaults {
     simulatorId: profile.defaultSimulatorId || config.defaults.simulatorId,
     buildMode: profile.defaultBuildMode || config.defaults.buildMode,
     platform: profile.defaultPlatform || config.defaults.platform,
+    streaming: profile.streaming ?? config.defaults.streaming,
   };
   return { ...config.defaults };
 }
@@ -140,6 +141,9 @@ function applyFileConfig(fileConfig: FileConfig, filePath: string): void {
   }
   if (fileConfig.defaultTarget) {
     config.defaults.target = config.defaults.target || fileConfig.defaultTarget;
+  }
+  if (fileConfig.defaultStreaming !== undefined && config.defaults.streaming === undefined) {
+    config.defaults.streaming = fileConfig.defaultStreaming;
   }
   if (fileConfig.profiles) {
     config.profiles = { ...config.profiles, ...fileConfig.profiles };

@@ -18,7 +18,7 @@ import {
 import type { BuildMode, BuildPlatform, JsonObject, ToolCallResult, ToolDefinition } from '../../types/index.js';
 import { formatCommandResult, toolText } from '../../utils/output.js';
 import { runCommand } from '../../utils/process.js';
-import { stringOrUndefined } from '../helpers.js';
+import { stringOrUndefined, booleanOrUndefined } from '../helpers.js';
 import { bazelToolDefinitions } from '../bazel-tools.js';
 
 export const definitions: ToolDefinition[] = [
@@ -50,6 +50,10 @@ export const definitions: ToolDefinition[] = [
         simulatorId: { type: 'string', description: 'Default simulator UDID.' },
         buildMode: { type: 'string', enum: ['none', 'debug', 'release', 'release_with_symbols'] },
         platform: { type: 'string', enum: ['none', 'simulator', 'device'] },
+        streaming: {
+          type: 'boolean',
+          description: 'Default streaming for build/test tools. Defaults to false. Set true for live progress.',
+        },
         profile: { type: 'string', description: 'Activate a named profile from config file.' },
         clear: { type: 'boolean', description: 'Clear all session defaults.' },
       },
@@ -194,6 +198,7 @@ export async function handle(name: string, args: JsonObject): Promise<ToolCallRe
         simulatorId: stringOrUndefined(args.simulatorId),
         buildMode: stringOrUndefined(args.buildMode) as BuildMode | undefined,
         platform: stringOrUndefined(args.platform) as BuildPlatform | undefined,
+        streaming: booleanOrUndefined(args.streaming),
       });
       const lines = Object.entries(updated)
         .filter(([, v]) => v !== undefined)

@@ -5,6 +5,7 @@ import { runCommand } from '../../utils/process.js';
 import { formatCommandResult, structuredCommandResult, toolResult, toolText } from '../../utils/output.js';
 import { getConfig } from '../../runtime/config.js';
 import { stringOrUndefined, numberOrUndefined } from '../helpers.js';
+import { STREAMING_PROPERTY } from '../schema-constants.js';
 import { asStringArray } from '../../core/bazel.js';
 
 export const definitions: ToolDefinition[] = [
@@ -19,7 +20,7 @@ export const definitions: ToolDefinition[] = [
         target: { type: 'string', description: 'Specific target to build (default: all targets).' },
         extraArgs: { type: 'array', items: { type: 'string' }, description: 'Additional arguments passed to swift build.' },
         timeoutSeconds: { type: 'number' },
-        streaming: { type: 'boolean', description: 'Stream build output incrementally via progress notifications.' },
+        streaming: STREAMING_PROPERTY,
       },
     },
   },
@@ -34,7 +35,7 @@ export const definitions: ToolDefinition[] = [
         configuration: { type: 'string', enum: ['debug', 'release'], description: 'Build configuration (default: debug).' },
         extraArgs: { type: 'array', items: { type: 'string' }, description: 'Additional arguments passed to swift test.' },
         timeoutSeconds: { type: 'number' },
-        streaming: { type: 'boolean', description: 'Stream test output incrementally via progress notifications.' },
+        streaming: STREAMING_PROPERTY,
       },
     },
   },

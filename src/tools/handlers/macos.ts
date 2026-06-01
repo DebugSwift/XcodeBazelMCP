@@ -1,5 +1,6 @@
 import type { JsonObject, ToolCallResult, ToolDefinition, BuildArgs, TestArgs, TargetKind, BuildMode } from '../../types/index.js';
 import { stringOrUndefined, numberOrUndefined } from '../helpers.js';
+import { STREAMING_PROPERTY } from '../schema-constants.js';
 import { buildCommandArgs, configArgs, discoverExpression, modeArgs, requireLabel, runBazel, asStringArray, testFilterArgs } from '../../core/bazel.js';
 import { findAppBundle, readBundleId } from '../../core/simulators.js';
 import { formatCommandResult, structuredCommandResult, toolResult, toolText } from '../../utils/output.js';
@@ -19,7 +20,7 @@ export const definitions: ToolDefinition[] = [
         startupArgs: { type: 'array', items: { type: 'string' } },
         extraArgs: { type: 'array', items: { type: 'string' } },
         timeoutSeconds: { type: 'number' },
-        streaming: { type: 'boolean', description: 'Stream build output incrementally via progress notifications.' },
+        streaming: STREAMING_PROPERTY,
       },
       required: ['target'],
     },
@@ -37,7 +38,7 @@ export const definitions: ToolDefinition[] = [
         extraArgs: { type: 'array', items: { type: 'string' } },
         runArgs: { type: 'array', items: { type: 'string' }, description: 'Arguments passed to the launched binary after --.' },
         timeoutSeconds: { type: 'number' },
-        streaming: { type: 'boolean', description: 'Stream output incrementally via progress notifications.' },
+        streaming: STREAMING_PROPERTY,
       },
       required: ['target'],
     },
@@ -54,7 +55,7 @@ export const definitions: ToolDefinition[] = [
         startupArgs: { type: 'array', items: { type: 'string' } },
         extraArgs: { type: 'array', items: { type: 'string' } },
         timeoutSeconds: { type: 'number' },
-        streaming: { type: 'boolean', description: 'Stream test output incrementally via progress notifications.' },
+        streaming: STREAMING_PROPERTY,
       },
       required: ['target'],
     },

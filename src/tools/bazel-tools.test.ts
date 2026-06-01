@@ -330,6 +330,7 @@ describe('Bazel MCP tool definitions', () => {
       const properties = tool.inputSchema.properties as Record<string, unknown>;
       const streaming = properties.streaming as Record<string, unknown>;
       expect(streaming?.type, `${toolName} should expose streaming flag`).toBe('boolean');
+      expect(streaming?.default, `${toolName} streaming should default to false`).toBe(false);
     }
   });
 

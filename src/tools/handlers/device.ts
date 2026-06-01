@@ -24,6 +24,7 @@ import { findAppBundle, readBundleId } from '../../core/simulators.js';
 import { getConfig } from '../../runtime/config.js';
 import { formatCommandResult, structuredCommandResult, toolResult, toolText } from '../../utils/output.js';
 import { deviceLogCaptures, stringOrUndefined, numberOrUndefined } from '../helpers.js';
+import { STREAMING_PROPERTY } from '../schema-constants.js';
 
 export const definitions: ToolDefinition[] = [
   {
@@ -64,7 +65,7 @@ export const definitions: ToolDefinition[] = [
           description: 'Environment variables injected into the launched app on device.',
         },
         timeoutSeconds: { type: 'number' },
-        streaming: { type: 'boolean', description: 'Stream build output incrementally via progress notifications.' },
+        streaming: STREAMING_PROPERTY,
       },
       required: ['target'],
     },
@@ -133,7 +134,7 @@ export const definitions: ToolDefinition[] = [
         startupArgs: { type: 'array', items: { type: 'string' } },
         extraArgs: { type: 'array', items: { type: 'string' } },
         timeoutSeconds: { type: 'number' },
-        streaming: { type: 'boolean', description: 'Stream test output incrementally.' },
+        streaming: STREAMING_PROPERTY,
       },
       required: ['target'],
     },
