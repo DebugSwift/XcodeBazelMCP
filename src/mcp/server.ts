@@ -89,10 +89,16 @@ async function handleMessage(message: JsonRpcMessage): Promise<void> {
             description: 'Current session state: active workflows, defaults, uptime.',
             mimeType: 'application/json',
           },
+        ],
+      });
+    }
+    if (method === 'resources/templates/list') {
+      return sendResult(id, {
+        resourceTemplates: [
           {
-            uri: 'xcodebazel://agent-debug-log',
+            uriTemplate: 'xcodebazel://agent-debug-log?path={path}',
             name: 'Agent debug NDJSON log',
-            description: 'Structured agent debug log. Read with ?path=<absolute-log-path> query on the URI.',
+            description: 'Structured agent debug log at an absolute host path. Use bazel_ios_agent_debug_log_read or pass ?path=<absolute-log-path>.',
             mimeType: 'application/json',
           },
         ],
