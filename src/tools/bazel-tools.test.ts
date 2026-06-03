@@ -33,6 +33,10 @@ describe('Bazel MCP tool definitions', () => {
       'bazel_ios_test_coverage',
       'bazel_ios_log_capture_start',
       'bazel_ios_log_capture_stop',
+      'bazel_ios_agent_debug_log_clear',
+      'bazel_ios_agent_debug_log_read',
+      'bazel_ios_agent_debug_log_pull',
+      'bazel_ios_agent_debug_repro',
       'bazel_ios_last_command',
       'bazel_ios_bsp_status',
       'bazel_ios_stop_app',
@@ -122,7 +126,7 @@ describe('Bazel MCP tool definitions', () => {
     ];
     expect([...names].sort()).toEqual([...expected].sort());
     expect(new Set(names).size).toBe(names.length);
-    expect(bazelToolDefinitions.length).toBe(112);
+    expect(bazelToolDefinitions.length).toBe(116);
   });
 
   it('advertises startupArgs on every Bazel command tool that can need startup flags', () => {
@@ -456,6 +460,26 @@ describe('Set defaults tool', () => {
     const result = await callBazelTool('bazel_ios_list_profiles', {});
     const text = extractText(result);
     expect(text).toContain('No profiles configured');
+  });
+
+  it('bazel_ios_agent_debug_log_clear and read round-trip', async () => {
+    const { mkdtempSync, existsSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const { tmpdir } = await import('node:os');
+    const dir = mkdtempSync(join(tmpdir(), 'xbmcp-adbg-'));
+    const logPath = join(dir, 'debug.log');
+
+    const clearResult = await callBazelTool('bazel_ios_agent_debug_log_clear', { logPath });
+    expect(clearResult.isError).toBeFalsy();
+    expect(existsSync(logPath)).toBe(false);
+
+    const { writeFileSync } = await import('node:fs');
+    writeFileSync(logPath, '{"hypothesisId":"H1","message":"ok"}\n');
+
+    const readResult = await callBazelTool('bazel_ios_agent_debug_log_read', { logPath, hypothesisId: 'H1' });
+    const parsed = JSON.parse(extractText(readResult));
+    expect(parsed.entries).toHaveLength(1);
+    expect(parsed.hypothesisStatusHints.H1).toBe('UNKNOWN');
   });
 
   it('bazel_ios_last_command returns no command initially', async () => {

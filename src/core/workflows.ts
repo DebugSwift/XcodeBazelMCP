@@ -50,6 +50,17 @@ export const WORKFLOWS: WorkflowInfo[] = [
     ],
   },
   {
+    id: 'agent_debug',
+    name: 'Agent Debug (Cursor)',
+    description: 'NDJSON agent debug logs: clear, read, pull from simulator, one-shot repro.',
+    tools: [
+      'bazel_ios_agent_debug_log_clear',
+      'bazel_ios_agent_debug_log_read',
+      'bazel_ios_agent_debug_log_pull',
+      'bazel_ios_agent_debug_repro',
+    ],
+  },
+  {
     id: 'ui_automation',
     name: 'UI Automation',
     description: 'Tap, swipe, type, drag, and inspect accessibility tree on simulator.',
@@ -184,7 +195,7 @@ export const WORKFLOWS: WorkflowInfo[] = [
 const ALL_WORKFLOW_IDS = new Set(WORKFLOWS.map((w) => w.id));
 
 export const DEFAULT_WORKFLOWS = [
-  'build', 'test', 'simulator', 'app_lifecycle', 'project', 'session',
+  'build', 'test', 'simulator', 'app_lifecycle', 'project', 'session', 'agent_debug',
 ];
 
 export function validateWorkflowIds(ids: string[]): string[] {

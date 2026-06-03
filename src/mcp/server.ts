@@ -89,6 +89,12 @@ async function handleMessage(message: JsonRpcMessage): Promise<void> {
             description: 'Current session state: active workflows, defaults, uptime.',
             mimeType: 'application/json',
           },
+          {
+            uri: 'xcodebazel://agent-debug-log',
+            name: 'Agent debug NDJSON log',
+            description: 'Structured agent debug log. Read with ?path=<absolute-log-path> query on the URI.',
+            mimeType: 'application/json',
+          },
         ],
       });
     }
@@ -133,6 +139,23 @@ async function handleMessage(message: JsonRpcMessage): Promise<void> {
               uri: params.uri,
               mimeType: 'application/json',
               text: JSON.stringify(status, null, 2),
+            },
+          ],
+        });
+      }
+      if (params?.uri?.startsWith('xcodebazel://agent-debug-log')) {
+        const { parseAgentDebugLogUri, readAgentDebugLog } = await import('../core/agent-debug-log.js');
+        const logPath = parseAgentDebugLogUri(params.uri);
+        if (!logPath) {
+          throw new Error('agent-debug-log resource requires ?path=<absolute-log-path> query parameter.');
+        }
+        const result = readAgentDebugLog({ logPath });
+        return sendResult(id, {
+          contents: [
+            {
+              uri: params.uri,
+              mimeType: 'application/json',
+              text: JSON.stringify(result, null, 2),
             },
           ],
         });

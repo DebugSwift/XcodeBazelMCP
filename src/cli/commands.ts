@@ -1,7 +1,9 @@
 import { createInterface } from 'node:readline';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync, readdirSync, readFileSync, cpSync } from 'node:fs';
 import { spawn } from 'node:child_process';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { homedir } from 'node:os';
 import { callBazelTool, callBazelToolStreaming } from '../tools/index.js';
 import type { JsonObject } from '../types/index.js';
 
@@ -27,6 +29,54 @@ export async function printTool(name: string, args: JsonObject): Promise<void> {
   if (result.isError) process.exitCode = 1;
 }
 
+function bundledSkillsDir(): string | null {
+  const here = dirname(fileURLToPath(import.meta.url));
+  for (const candidate of [join(here, '..', 'skills'), join(here, '..', '..', 'skills')]) {
+    if (existsSync(candidate)) return candidate;
+  }
+  const cwdSkill = join(process.cwd(), 'skills');
+  if (existsSync(cwdSkill)) return cwdSkill;
+  return null;
+}
+
+function installBundledSkills(): void {
+  const source = bundledSkillsDir();
+  if (!source) {
+    console.log('No bundled skills directory found (skip skill copy).');
+    return;
+  }
+
+  const skillNames = readdirSync(source, { withFileTypes: true })
+    .filter((e) => e.isDirectory())
+    .map((e) => e.name);
+
+  const destRoots = [
+    join(homedir(), '.cursor', 'skills'),
+    join(process.cwd(), '.agents', 'skills'),
+  ];
+
+  for (const skillName of skillNames) {
+    const srcSkill = join(source, skillName, 'SKILL.md');
+    if (!existsSync(srcSkill)) continue;
+    const content = readFileSync(srcSkill, 'utf-8');
+
+    for (const root of destRoots) {
+      const destDir = join(root, skillName);
+      mkdirSync(destDir, { recursive: true });
+      const destFile = join(destDir, 'SKILL.md');
+      writeFileSync(destFile, content);
+      console.log(`Installed skill: ${destFile}`);
+    }
+
+    const agentsMirror = join(process.cwd(), '.agents', 'skills', skillName);
+    if (!existsSync(agentsMirror)) {
+      mkdirSync(dirname(agentsMirror), { recursive: true });
+      cpSync(join(source, skillName), agentsMirror, { recursive: true });
+      console.log(`Installed skill: ${agentsMirror}`);
+    }
+  }
+}
+
 export function runSkillInit(): void {
   const skillContent = `# XcodeBazelMCP Skill
 
@@ -46,6 +96,16 @@ Key commands:
 - \`bazel_ios_set_defaults\` — Set default target, simulator, build mode
 - \`bazel_ios_clean\` — Clean build outputs
 - \`bazel_ios_log_capture_start\` / \`bazel_ios_log_capture_stop\` — Capture simulator logs
+- \`bazel_ios_agent_debug_log_clear\` / \`read\` / \`pull\` / \`repro\` — Cursor DEBUG MODE NDJSON workflow
+
+## Cursor debug mode (swift-agent-debug-log)
+
+1. \`bazel_ios_agent_debug_log_clear\` with \`logPath\` → \`.cursor/debug-{session}.log\`
+2. \`bazel_ios_agent_debug_repro\` (or \`build_and_run\` with \`launchEnv\`: \`AGENT_DEBUG_LOG_PATH\`, \`AGENT_DEBUG_SESSION_ID\`)
+3. User reproduces the bug in the simulator
+4. \`bazel_ios_agent_debug_log_read\` on the host log, or \`bazel_ios_agent_debug_log_pull\` if Swift wrote to \`Documents/agent-debug.ndjson\`
+
+See skill \`swift-agent-debug-log\` (installed by \`xcodebazelmcp init\`).
 
 All build/test/query tools support \`streaming: true\` for real-time output via MCP progress notifications.
 
@@ -83,6 +143,8 @@ xcodebazelmcp coverage //tests:tests
     writeFileSync(fallback, skillContent);
     console.log(`Installed: ${fallback}`);
   }
+
+  installBundledSkills();
 }
 
 export async function runUpgrade(args: string[]): Promise<void> {

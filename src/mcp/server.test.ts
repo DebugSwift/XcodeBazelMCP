@@ -77,7 +77,7 @@ describe('MCP server protocol', () => {
 
     const toolsResp = lines.map((l) => JSON.parse(l)).find((r) => r.id === 2);
     expect(toolsResp).toBeDefined();
-    expect(toolsResp.result.tools).toHaveLength(34);
+    expect(toolsResp.result.tools).toHaveLength(38);
     const names = toolsResp.result.tools.map((t: { name: string }) => t.name);
     expect(names).toContain('bazel_ios_build');
     expect(names).toContain('bazel_ios_test');
@@ -109,10 +109,11 @@ describe('MCP server protocol', () => {
     ]);
 
     const resp = lines.map((l) => JSON.parse(l)).find((r) => r.id === 2);
-    expect(resp.result.resources).toHaveLength(2);
+    expect(resp.result.resources).toHaveLength(3);
     const uris = resp.result.resources.map((r: { uri: string }) => r.uri);
     expect(uris).toContain('xcodebazel://last-command');
     expect(uris).toContain('xcodebazel://session-status');
+    expect(uris).toContain('xcodebazel://agent-debug-log');
   });
 
   it('reads last-command resource (no command yet)', async () => {

@@ -11,10 +11,11 @@ import * as multiPlatform from './handlers/multi-platform.js';
 import * as spm from './handlers/spm.js';
 import * as scaffold from './handlers/scaffold.js';
 import * as uiAutomation from './handlers/ui-automation.js';
+import * as agentDebug from './handlers/agent-debug.js';
 
 const handlerModules = [
   session, build, simulator, device, lldb,
-  macos, multiPlatform, spm, scaffold, uiAutomation,
+  macos, multiPlatform, spm, scaffold, uiAutomation, agentDebug,
 ];
 
 export const bazelToolDefinitions: ToolDefinition[] = handlerModules.flatMap(m => m.definitions);
