@@ -75,6 +75,13 @@ async function handleMessage(message: JsonRpcMessage): Promise<void> {
     }
     if (method === 'prompts/list') return sendResult(id, { prompts: [] });
     if (method === 'resources/list') {
+      const { listAgentDebugLogResources } = await import('../core/agent-debug-log.js');
+      const { getConfig: getRuntimeConfig } = await import('../runtime/config.js');
+      const runtimeConfig = getRuntimeConfig();
+      const agentDebugResources = listAgentDebugLogResources([
+        runtimeConfig.workspacePath,
+        process.cwd(),
+      ]);
       return sendResult(id, {
         resources: [
           {
@@ -89,6 +96,7 @@ async function handleMessage(message: JsonRpcMessage): Promise<void> {
             description: 'Current session state: active workflows, defaults, uptime.',
             mimeType: 'application/json',
           },
+          ...agentDebugResources,
         ],
       });
     }
@@ -150,10 +158,21 @@ async function handleMessage(message: JsonRpcMessage): Promise<void> {
         });
       }
       if (params?.uri?.startsWith('xcodebazel://agent-debug-log')) {
-        const { parseAgentDebugLogUri, readAgentDebugLog } = await import('../core/agent-debug-log.js');
+        const { parseAgentDebugLogUri, readAgentDebugLog, readAgentDebugLogResourceHelp } = await import('../core/agent-debug-log.js');
+        const { getConfig: getRuntimeConfig } = await import('../runtime/config.js');
+        const runtimeConfig = getRuntimeConfig();
         const logPath = parseAgentDebugLogUri(params.uri);
         if (!logPath) {
-          throw new Error('agent-debug-log resource requires ?path=<absolute-log-path> query parameter.');
+          const help = readAgentDebugLogResourceHelp([runtimeConfig.workspacePath, process.cwd()]);
+          return sendResult(id, {
+            contents: [
+              {
+                uri: params.uri,
+                mimeType: 'application/json',
+                text: JSON.stringify(help, null, 2),
+              },
+            ],
+          });
         }
         const result = readAgentDebugLog({ logPath });
         return sendResult(id, {

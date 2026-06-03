@@ -109,11 +109,23 @@ describe('MCP server protocol', () => {
     ]);
 
     const resp = lines.map((l) => JSON.parse(l)).find((r) => r.id === 2);
-    expect(resp.result.resources).toHaveLength(2);
+    expect(resp.result.resources.length).toBeGreaterThanOrEqual(3);
     const uris = resp.result.resources.map((r: { uri: string }) => r.uri);
     expect(uris).toContain('xcodebazel://last-command');
     expect(uris).toContain('xcodebazel://session-status');
-    expect(uris).not.toContain('xcodebazel://agent-debug-log');
+    expect(uris.some((uri: string) => uri.startsWith('xcodebazel://agent-debug-log'))).toBe(true);
+  });
+
+  it('reads bare agent-debug-log resource without error', async () => {
+    const lines = await sendMcpRequest([
+      { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2024-11-05' } },
+      { jsonrpc: '2.0', id: 2, method: 'resources/read', params: { uri: 'xcodebazel://agent-debug-log' } },
+    ]);
+
+    const resp = lines.map((l) => JSON.parse(l)).find((r) => r.id === 2);
+    expect(resp.error).toBeUndefined();
+    const parsed = JSON.parse(resp.result.contents[0].text);
+    expect(parsed.kind).toBe('agent-debug-log-help');
   });
 
   it('lists agent-debug-log as a resource template (requires path param)', async () => {

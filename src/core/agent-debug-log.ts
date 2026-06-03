@@ -1,5 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync, copyFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync, copyFileSync, readdirSync, statSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import { runCommand } from '../utils/process.js';
 
 export const AGENT_DEBUG_ENV_LOG_PATH = 'AGENT_DEBUG_LOG_PATH';
@@ -139,6 +139,70 @@ export function readAgentDebugLog(options: AgentDebugReadOptions): AgentDebugRea
     byRunId,
     hypothesisStatusHints,
     parseErrors,
+  };
+}
+
+export function agentDebugLogResourceUri(logPath: string): string {
+  return `xcodebazel://agent-debug-log?path=${encodeURIComponent(logPath)}`;
+}
+
+export interface AgentDebugLogResource {
+  uri: string;
+  name: string;
+  description: string;
+  mimeType: string;
+}
+
+export function discoverAgentDebugLogPaths(searchRoots: string[]): string[] {
+  const seen = new Set<string>();
+  const discovered: Array<{ path: string; mtimeMs: number }> = [];
+
+  for (const root of searchRoots) {
+    const cursorDir = join(resolve(root), '.cursor');
+    if (!existsSync(cursorDir)) continue;
+    for (const entry of readdirSync(cursorDir)) {
+      if (!entry.startsWith('debug-') || !entry.endsWith('.log')) continue;
+      const logPath = resolve(cursorDir, entry);
+      if (seen.has(logPath)) continue;
+      seen.add(logPath);
+      discovered.push({ path: logPath, mtimeMs: statSync(logPath).mtimeMs });
+    }
+  }
+
+  return discovered.sort((a, b) => b.mtimeMs - a.mtimeMs).map((entry) => entry.path);
+}
+
+export function listAgentDebugLogResources(searchRoots: string[]): AgentDebugLogResource[] {
+  const logPaths = discoverAgentDebugLogPaths(searchRoots);
+  if (logPaths.length === 0) {
+    return [
+      {
+        uri: 'xcodebazel://agent-debug-log',
+        name: 'Agent debug NDJSON log',
+        description:
+          'Structured agent debug log. Use bazel_ios_agent_debug_log_read or pass ?path=<absolute-log-path> on the URI.',
+        mimeType: 'application/json',
+      },
+    ];
+  }
+
+  return logPaths.map((logPath, index) => ({
+    uri: agentDebugLogResourceUri(logPath),
+    name: index === 0 ? 'Agent debug NDJSON log' : `Agent debug log (${logPath.split('/').pop()})`,
+    description: `NDJSON debug log at ${logPath}`,
+    mimeType: 'application/json',
+  }));
+}
+
+export function readAgentDebugLogResourceHelp(searchRoots: string[]): Record<string, unknown> {
+  const discoveredPaths = discoverAgentDebugLogPaths(searchRoots);
+  return {
+    kind: 'agent-debug-log-help',
+    message:
+      'Provide ?path=<absolute-log-path> on the URI, or use bazel_ios_agent_debug_log_read / bazel_ios_agent_debug_log_pull.',
+    template: 'xcodebazel://agent-debug-log?path={path}',
+    discoveredPaths,
+    suggestedUris: discoveredPaths.map(agentDebugLogResourceUri),
   };
 }
 

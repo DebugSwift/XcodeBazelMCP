@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, writeFileSync, unlinkSync, existsSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, unlinkSync, existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
@@ -9,6 +9,9 @@ import {
   readAgentDebugLog,
   parseAgentDebugNdjson,
   extractNdjsonFromLogCapture,
+  discoverAgentDebugLogPaths,
+  listAgentDebugLogResources,
+  agentDebugLogResourceUri,
 } from './agent-debug-log.js';
 
 describe('agent-debug-log', () => {
@@ -90,5 +93,35 @@ describe('agent-debug-log', () => {
     const result = readAgentDebugLog({ logPath: join(tempDir, 'missing.log') });
     expect(result.exists).toBe(false);
     expect(result.entries).toEqual([]);
+  });
+
+  it('discoverAgentDebugLogPaths finds debug-*.log under .cursor', () => {
+    const cursorDir = join(tempDir, '.cursor');
+    mkdirSync(cursorDir, { recursive: true });
+    const debugLog = join(cursorDir, 'debug-abc123.log');
+    writeFileSync(debugLog, '{"message":"x"}\n');
+    writeFileSync(join(cursorDir, 'settings.json'), '{}');
+
+    expect(discoverAgentDebugLogPaths([tempDir])).toEqual([debugLog]);
+    expect(listAgentDebugLogResources([tempDir])).toEqual([
+      {
+        uri: agentDebugLogResourceUri(debugLog),
+        name: 'Agent debug NDJSON log',
+        description: `NDJSON debug log at ${debugLog}`,
+        mimeType: 'application/json',
+      },
+    ]);
+  });
+
+  it('listAgentDebugLogResources returns placeholder when no logs exist', () => {
+    expect(listAgentDebugLogResources([tempDir])).toEqual([
+      {
+        uri: 'xcodebazel://agent-debug-log',
+        name: 'Agent debug NDJSON log',
+        description:
+          'Structured agent debug log. Use bazel_ios_agent_debug_log_read or pass ?path=<absolute-log-path> on the URI.',
+        mimeType: 'application/json',
+      },
+    ]);
   });
 });
