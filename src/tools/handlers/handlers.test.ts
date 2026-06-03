@@ -9,6 +9,7 @@ import * as multiPlatform from './multi-platform.js';
 import * as spm from './spm.js';
 import * as scaffold from './scaffold.js';
 import * as uiAutomation from './ui-automation.js';
+import * as agentDebug from './agent-debug.js';
 
 const handlers = [
   { label: 'session', mod: session },
@@ -21,6 +22,7 @@ const handlers = [
   { label: 'spm', mod: spm },
   { label: 'scaffold', mod: scaffold },
   { label: 'uiAutomation', mod: uiAutomation },
+  { label: 'agentDebug', mod: agentDebug },
 ] as const;
 
 describe('handler modules', () => {
@@ -57,8 +59,8 @@ describe('handler modules', () => {
     }
   });
 
-  it('total definitions across all handlers is 112', () => {
+  it('total definitions across all handlers is 116', () => {
     const total = handlers.reduce((sum, { mod }) => sum + mod.definitions.length, 0);
-    expect(total).toBe(112);
+    expect(total).toBe(116);
   });
 });

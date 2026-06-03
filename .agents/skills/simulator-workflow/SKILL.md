@@ -37,6 +37,12 @@ The `bazel_ios_build_and_run` tool chains these steps (each failure short-circui
 
 Env vars are passed via `SIMCTL_CHILD_*` prefix convention — simctl forwards them to the launched process.
 
+For **Cursor DEBUG MODE** (NDJSON hypothesis logs), use the `swift-agent-debug-log` skill and `bazel_ios_agent_debug_*` tools:
+
+- `AGENT_DEBUG_LOG_PATH` / `AGENT_DEBUG_SESSION_ID` via `launchEnv` on `build_and_run` or `agent_debug_repro`
+- Simulator fallback: `Documents/agent-debug.ndjson` + `bazel_ios_agent_debug_log_pull`
+- Do not rely on the sim app writing directly to `.cursor/debug-*.log` on the host
+
 ## Platform CPU Flags
 
 | Platform | Flag |

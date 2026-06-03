@@ -3,7 +3,13 @@ import { resolveSimulator, type SimulatorDevice } from '../core/simulators.js';
 import { getDefaults } from '../runtime/config.js';
 import type { JsonObject } from '../types/index.js';
 
-export const logCaptures = new Map<string, { child: ReturnType<typeof spawn>; output: string; simulatorId: string }>();
+export const logCaptures = new Map<string, {
+  child: ReturnType<typeof spawn>;
+  output: string;
+  simulatorId: string;
+  messageContains?: string;
+  jsonLinesOnly?: boolean;
+}>();
 export let logCaptureCounter = 0;
 export function nextLogCaptureId(): number { return ++logCaptureCounter; }
 

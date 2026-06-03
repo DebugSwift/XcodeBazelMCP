@@ -41,12 +41,12 @@ describe('CLI help', () => {
 });
 
 describe('CLI tools', () => {
-  it('lists all 112 tools', () => {
+  it('lists all 116 tools', () => {
     const out = run(['tools']);
     const toolLines = out
       .split('\n')
       .filter((line) => line.match(/^[a-z_]+$/));
-    expect(toolLines.length).toBe(112);
+    expect(toolLines.length).toBe(116);
     expect(out).toContain('bazel_ios_build');
     expect(out).toContain('bazel_macos_build');
     expect(out).toContain('bazel_tvos_build');

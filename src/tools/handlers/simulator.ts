@@ -284,6 +284,14 @@ export const definitions: ToolDefinition[] = [
         processName: { type: 'string', description: 'Filter logs by process name.' },
         subsystem: { type: 'string', description: 'Filter logs by os_log subsystem (e.g. com.example.MyApp).' },
         level: { type: 'string', enum: ['default', 'info', 'debug'], description: 'Minimum log level.' },
+        messageContains: {
+          type: 'string',
+          description: 'On stop, keep only NDJSON entries whose message/data contains this substring.',
+        },
+        jsonLinesOnly: {
+          type: 'boolean',
+          description: 'On stop, parse NDJSON lines and return structured agent debug entries only.',
+        },
       },
     },
   },
@@ -585,7 +593,13 @@ export async function handle(name: string, args: JsonObject): Promise<ToolCallRe
 
       const child = spawn('xcrun', logArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
       const maxLogSize = 500_000;
-      const capture = { child, output: '', simulatorId: sim.udid };
+      const capture = {
+        child,
+        output: '',
+        simulatorId: sim.udid,
+        messageContains: stringOrUndefined(args.messageContains),
+        jsonLinesOnly: args.jsonLinesOnly === true,
+      };
       logCaptures.set(captureId, capture);
       child.stdout.on('data', (chunk: Buffer) => {
         if (capture.output.length < maxLogSize) capture.output += chunk.toString();
@@ -606,6 +620,28 @@ export async function handle(name: string, args: JsonObject): Promise<ToolCallRe
 
       const logOutput = capture.output || '(no logs captured)';
       const truncated = logOutput.length >= 500_000 ? '\n[log output truncated at 500KB]' : '';
+
+      if (capture.jsonLinesOnly || capture.messageContains) {
+        const { extractNdjsonFromLogCapture } = await import('../../core/agent-debug-log.js');
+        const entries = extractNdjsonFromLogCapture(logOutput, {
+          messageContains: capture.messageContains,
+          jsonLinesOnly: capture.jsonLinesOnly,
+        });
+        return toolText(
+          JSON.stringify(
+            {
+              captureId: args.captureId,
+              simulatorId: capture.simulatorId,
+              entryCount: entries.length,
+              entries,
+              truncated: logOutput.length >= 500_000,
+            },
+            null,
+            2,
+          ) + truncated,
+        );
+      }
+
       return toolText(`Log capture stopped (${args.captureId}).\nSimulator: ${capture.simulatorId}\n\n${logOutput}${truncated}`);
     }
     case 'bazel_ios_push_notification': {
