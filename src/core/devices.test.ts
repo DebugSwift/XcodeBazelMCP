@@ -31,8 +31,10 @@ async function devices() {
 }
 
 type DevicesModule = Awaited<ReturnType<typeof devices>>;
+let countSigningIdentities: DevicesModule['countSigningIdentities'];
 let deviceInfo: DevicesModule['deviceInfo'];
 let findPymobiledevice3: DevicesModule['findPymobiledevice3'];
+let formatDeviceError: DevicesModule['formatDeviceError'];
 let installAppOnDevice: DevicesModule['installAppOnDevice'];
 let launchAppOnDevice: DevicesModule['launchAppOnDevice'];
 let listDevicePairs: DevicesModule['listDevicePairs'];
@@ -59,8 +61,10 @@ beforeEach(async () => {
   vi.clearAllMocks();
   mockSpawn.mockImplementation(() => new MockChild());
   ({
+    countSigningIdentities,
     deviceInfo,
     findPymobiledevice3,
+    formatDeviceError,
     installAppOnDevice,
     launchAppOnDevice,
     listDevicePairs,
@@ -379,5 +383,30 @@ describe('unpairDevice', () => {
     await unpairDevice('ABC-123');
 
     expect(mockRunCommand).toHaveBeenCalledWith('xcrun', ['devicectl', 'manage', 'unpair', '--device', 'ABC-123'], expect.any(Object));
+  });
+});
+
+describe('formatDeviceError', () => {
+  it('maps locked device errors', () => {
+    expect(formatDeviceError('kAMDMobileImageMounterDeviceLocked')).toMatch(/locked/i);
+    expect(formatDeviceError('CoreDeviceError 12040')).toMatch(/locked/i);
+  });
+
+  it('returns undefined for unknown errors', () => {
+    expect(formatDeviceError('something else entirely')).toBeUndefined();
+  });
+});
+
+describe('countSigningIdentities', () => {
+  it('parses valid identity count from security output', async () => {
+    mockRunCommand.mockResolvedValueOnce({
+      ...mockSuccess,
+      output: '  1) ABC "Apple Development: Me"\n  2 valid identities found\n',
+    });
+
+    const result = await countSigningIdentities();
+
+    expect(result.count).toBe(2);
+    expect(mockRunCommand).toHaveBeenCalledWith('security', ['find-identity', '-v', '-p', 'codesigning'], expect.any(Object));
   });
 });

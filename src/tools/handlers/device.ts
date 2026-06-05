@@ -7,8 +7,10 @@ import {
   runBazel,
   testFilterArgs,
 } from '../../core/bazel.js';
+import { deployBuiltAppToDevice } from '../../core/device-deploy.js';
 import {
   deviceInfo,
+  formatDeviceError,
   installAppOnDevice,
   launchAppOnDevice,
   listDevicePairs,
@@ -66,6 +68,17 @@ export const definitions: ToolDefinition[] = [
         },
         timeoutSeconds: { type: 'number' },
         streaming: STREAMING_PROPERTY,
+      },
+      required: ['target'],
+    },
+  },
+  {
+    name: 'bazel_ios_device_get_app_path',
+    description: 'Return the .app bundle path for a previously built Bazel device target.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        target: { type: 'string', description: 'Bazel target label (e.g. //app:app).' },
       },
       required: ['target'],
     },
@@ -245,7 +258,11 @@ export async function handle(name: string, args: JsonObject): Promise<ToolCallRe
           const icon = d.platform === 'watchOS' ? '⌚️' : '📱';
           const status = d.state === 'connected' ? '✓' : '✗';
           lines.push(`  ${icon} [${status}] ${d.name}`);
-          lines.push(`    OS: ${d.osVersion}  UDID: ${d.udid}`);
+          lines.push(`    OS: ${d.osVersion}`);
+          lines.push(`    hardware UDID: ${d.udid}`);
+          if (d.coreDeviceIdentifier && d.coreDeviceIdentifier !== d.udid) {
+            lines.push(`    CoreDevice ID: ${d.coreDeviceIdentifier}`);
+          }
           if (d.connectionType && d.connectionType !== 'unknown') {
             lines.push(`    Connection: ${d.connectionType}`);
           }
@@ -254,7 +271,8 @@ export async function handle(name: string, args: JsonObject): Promise<ToolCallRe
       }
       lines.push(`✅ ${filtered.length} device${filtered.length !== 1 ? 's' : ''} found.`);
       lines.push('', 'Hints');
-      lines.push('  Use the UDID from above with --device-id on device commands.');
+      lines.push('  Pass hardware UDID or CoreDevice ID as deviceId, or use deviceName.');
+      lines.push('  Run bazel_ios_health before long device builds to verify signing and connectivity.');
       return toolResult(lines.join('\n'), { devices: filtered });
     }
     case 'bazel_ios_device_build_and_run': {
@@ -268,49 +286,23 @@ export async function handle(name: string, args: JsonObject): Promise<ToolCallRe
         return toolText(formatCommandResult(buildResult), true);
       }
 
-      const config = getConfig();
-      const appPath = findAppBundle(config.workspacePath, requireLabel(buildArgs.target));
-      if (!appPath) {
-        return toolText(
-          `${formatCommandResult(buildResult)}\n\nBuild succeeded but .app bundle not found in bazel-bin. Check the target produces an ios_application.`,
-          true,
-        );
-      }
-
-      const device = await resolveDevice({
+      return deployBuiltAppToDevice({
+        target: requireLabel(buildArgs.target),
+        buildResult,
         deviceId: stringOrUndefined(args.deviceId),
         deviceName: stringOrUndefined(args.deviceName),
+        launchArgs: asStringArray(args.launchArgs, 'launchArgs'),
+        launchEnv: (args.launchEnv as Record<string, string> | undefined) || {},
       });
-
-      const installResult = await installAppOnDevice(device.udid, appPath);
-      if (installResult.exitCode !== 0) {
-        return toolText(
-          `${formatCommandResult(buildResult)}\n\nInstall failed:\n${formatCommandResult(installResult)}`,
-          true,
-        );
+    }
+    case 'bazel_ios_device_get_app_path': {
+      const target = requireLabel(args.target);
+      const config = getConfig();
+      const appPath = findAppBundle(config.workspacePath, target);
+      if (!appPath) {
+        return toolText(`No .app bundle found for ${target}. Build the target first (platform=device).`, true);
       }
-
-      const bundleId = readBundleId(appPath);
-      const launchResult = await launchAppOnDevice(
-        device.udid,
-        bundleId,
-        asStringArray(args.launchArgs, 'launchArgs'),
-        (args.launchEnv as Record<string, string> | undefined) || {},
-      );
-
-      const lines = [
-        formatCommandResult(buildResult),
-        '',
-        `App: ${appPath}`,
-        `Bundle ID: ${bundleId}`,
-        `Device: ${device.name} (${device.udid}) — iOS ${device.osVersion}`,
-        `Install: ${installResult.exitCode === 0 ? 'OK' : 'FAILED'}`,
-        `Launch: ${launchResult.exitCode === 0 ? 'OK' : 'FAILED'}`,
-      ];
-      if (launchResult.output.trim()) {
-        lines.push('', launchResult.output.trim());
-      }
-      return toolText(lines.join('\n'), launchResult.exitCode !== 0);
+      return toolText(appPath);
     }
     case 'bazel_ios_device_install_app': {
       if (typeof args.appPath !== 'string' || !args.appPath.trim()) {
@@ -325,12 +317,14 @@ export async function handle(name: string, args: JsonObject): Promise<ToolCallRe
       let bundleId = '(unknown)';
       try { bundleId = readBundleId(args.appPath); } catch { /* best effort */ }
 
+      const hint = installResult.exitCode !== 0 ? formatDeviceError(installResult.output) : undefined;
       const lines = [
         `Device: ${device.name} (${device.udid}) — iOS ${device.osVersion}`,
         `Bundle ID: ${bundleId}`,
         '',
         formatCommandResult(installResult),
       ];
+      if (hint) lines.push('', hint);
       return toolText(lines.join('\n'), installResult.exitCode !== 0);
     }
     case 'bazel_ios_device_launch_app': {

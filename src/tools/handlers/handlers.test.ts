@@ -59,8 +59,8 @@ describe('handler modules', () => {
     }
   });
 
-  it('total definitions across all handlers is 116', () => {
+  it('total definitions across all handlers is 117', () => {
     const total = handlers.reduce((sum, { mod }) => sum + mod.definitions.length, 0);
-    expect(total).toBe(116);
+    expect(total).toBe(117);
   });
 });

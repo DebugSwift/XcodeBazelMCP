@@ -3,4 +3,20 @@ bazelPath: /opt/homebrew/bin/bazel
 defaultSimulatorName: iPhone 16 Pro
 defaultPlatform: simulator
 defaultTestOutput: errors
-# enabledWorkflows: build, test, simulator, app_lifecycle, session
+defaultStreaming: true
+enabledWorkflows: build, test, simulator, app_lifecycle, device, project, session, agent_debug
+
+profiles:
+  app-simulator:
+    defaultTarget: //app:MyApp
+    defaultSimulatorName: iPhone 16 Pro
+    defaultBuildMode: debug
+    defaultPlatform: simulator
+    streaming: true
+
+  app-device:
+    defaultTarget: //app:MyApp
+    defaultDeviceName: "My iPhone"
+    defaultBuildMode: debug
+    defaultPlatform: device
+    streaming: true

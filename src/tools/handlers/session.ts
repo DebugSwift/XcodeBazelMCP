@@ -48,6 +48,8 @@ export const definitions: ToolDefinition[] = [
         target: { type: 'string', description: 'Default Bazel target label.' },
         simulatorName: { type: 'string', description: 'Default simulator device name.' },
         simulatorId: { type: 'string', description: 'Default simulator UDID.' },
+        deviceName: { type: 'string', description: 'Default physical device name.' },
+        deviceId: { type: 'string', description: 'Default physical device UDID.' },
         buildMode: { type: 'string', enum: ['none', 'debug', 'release', 'release_with_symbols'] },
         platform: { type: 'string', enum: ['none', 'simulator', 'device'] },
         streaming: {
@@ -122,8 +124,16 @@ export async function handle(name: string, args: JsonObject): Promise<ToolCallRe
     }
     case 'bazel_ios_health': {
       const os = await import('node:os');
+      const { resolve: resolvePath } = await import('node:path');
+      const { countSigningIdentities, listDevices } = await import('../../core/devices.js');
       const config = getConfig();
       assertBazelWorkspace(config.workspacePath);
+
+      const hasModuleBazel = existsSync(join(config.workspacePath, 'MODULE.bazel'));
+      const hasWorkspace = existsSync(join(config.workspacePath, 'WORKSPACE'))
+        || existsSync(join(config.workspacePath, 'WORKSPACE.bazel'));
+      const usingCwdFallback = !process.env.BAZEL_IOS_WORKSPACE
+        && resolvePath(config.workspacePath) === resolvePath(process.cwd());
 
       const lines = [
         '⚙️ XcodeBazelMCP Doctor',
@@ -139,16 +149,30 @@ export async function handle(name: string, args: JsonObject): Promise<ToolCallRe
         `  path: ${config.workspacePath}`,
         `  bazel: ${config.bazelPath}`,
         `  config: ${config.configFilePath || '(none)'}`,
-        `  MODULE.bazel: ${existsSync(join(config.workspacePath, 'MODULE.bazel')) ? '✅ found' : '❌ missing'}`,
-        `  WORKSPACE: ${existsSync(join(config.workspacePath, 'WORKSPACE')) || existsSync(join(config.workspacePath, 'WORKSPACE.bazel')) ? '✅ found' : '⚠️ missing (using MODULE.bazel)'}`,
+        `  BAZEL_IOS_WORKSPACE: ${process.env.BAZEL_IOS_WORKSPACE || '(not set)'}`,
+        `  MODULE.bazel: ${hasModuleBazel ? '✅ found' : '❌ missing'}`,
+        `  WORKSPACE: ${hasWorkspace ? '✅ found' : '⚠️ missing (using MODULE.bazel)'}`,
         `  .bazelrc: ${existsSync(join(config.workspacePath, '.bazelrc')) ? '✅ found' : '⚠️ missing'}`,
       ];
 
-      const [bazelVersion, xcode, simctl] = await Promise.all([
+      if (usingCwdFallback && !hasModuleBazel && !hasWorkspace) {
+        lines.push(
+          '  ⚠️ Workspace looks like process.cwd() and is not a Bazel root.',
+          '     Set BAZEL_IOS_WORKSPACE in MCP config or workspacePath in .xcodebazelmcp/config.yaml.',
+        );
+      } else if (!process.env.BAZEL_IOS_WORKSPACE && !config.configFilePath) {
+        lines.push('  ⚠️ BAZEL_IOS_WORKSPACE not set — using cwd or config file workspacePath.');
+      }
+
+      const [bazelVersion, xcode, simctl, deviceList, signing] = await Promise.all([
         runCommand(config.bazelPath, ['--version'], { cwd: config.workspacePath, timeoutSeconds: 20, maxOutput: config.maxOutput }),
         runCommand('xcodebuild', ['-version'], { cwd: config.workspacePath, timeoutSeconds: 20, maxOutput: config.maxOutput }),
         runCommand('xcrun', ['simctl', 'list', 'devices', 'available', '--json'], { cwd: config.workspacePath, timeoutSeconds: 30, maxOutput: config.maxOutput }),
+        listDevices(),
+        countSigningIdentities(),
       ]);
+
+      const connectedDevices = deviceList.devices.filter((d) => d.state === 'connected');
 
       lines.push(
         '',
@@ -156,12 +180,33 @@ export async function handle(name: string, args: JsonObject): Promise<ToolCallRe
         `  bazel: ${bazelVersion.exitCode === 0 ? bazelVersion.output.trim() : `❌ exit ${bazelVersion.exitCode}`}`,
         `  xcode: ${xcode.exitCode === 0 ? xcode.output.trim().replace(/\n/g, ' / ') : `❌ exit ${xcode.exitCode}`}`,
         `  simctl: ${simctl.exitCode === 0 ? '✅ available' : '❌ unavailable'}`,
+        `  devicectl: ${deviceList.command.exitCode === 0 ? '✅ available' : `❌ exit ${deviceList.command.exitCode}`}`,
+        `  codesigning identities: ${signing.command.exitCode === 0 ? `${signing.count} valid` : `❌ exit ${signing.command.exitCode}`}`,
       );
+
+      lines.push('', 'Physical Devices');
+      if (deviceList.command.exitCode !== 0) {
+        lines.push('  ❌ Could not list devices via devicectl.');
+      } else if (connectedDevices.length === 0) {
+        lines.push('  ⚠️ No connected devices. Connect via USB/Wi-Fi and trust this Mac for device deploy.');
+      } else {
+        for (const d of connectedDevices) {
+          lines.push(`  ✅ ${d.name} — iOS ${d.osVersion}`);
+          lines.push(`     hardware UDID: ${d.udid}`);
+          if (d.coreDeviceIdentifier && d.coreDeviceIdentifier !== d.udid) {
+            lines.push(`     CoreDevice ID: ${d.coreDeviceIdentifier}`);
+          }
+        }
+      }
+      if (signing.count === 0 && signing.command.exitCode === 0) {
+        lines.push('', '  ⚠️ No code signing identities found. Device builds will fail until certificates are installed.');
+      }
 
       const configWorkflows = getEnabledWorkflows();
       const effective = configWorkflows || DEFAULT_WORKFLOWS;
       const enabledNames = getEnabledToolNames(effective);
       const toolCount = enabledNames ? enabledNames.size : bazelToolDefinitions.length;
+      const deviceWorkflowEnabled = effective.includes('all') || effective.includes('device');
 
       lines.push(
         '',
@@ -174,6 +219,15 @@ export async function handle(name: string, args: JsonObject): Promise<ToolCallRe
       for (const wf of WORKFLOWS) {
         const isEnabled = effective.includes('all') || effective.includes(wf.id);
         lines.push(`    ${isEnabled ? '✅' : '⛔'} ${wf.id}: ${wf.tools.length} tools`);
+      }
+
+      if (!deviceWorkflowEnabled) {
+        lines.push(
+          '',
+          '  ⚠️ Device workflow is disabled — physical device tools are hidden from agents.',
+          '     Enable with: xcodebazelmcp toggle-workflow device on',
+          '     Or add device to enabledWorkflows in .xcodebazelmcp/config.yaml',
+        );
       }
 
       const hasError = bazelVersion.exitCode !== 0 || xcode.exitCode !== 0 || simctl.exitCode !== 0;
@@ -196,6 +250,8 @@ export async function handle(name: string, args: JsonObject): Promise<ToolCallRe
         target: stringOrUndefined(args.target),
         simulatorName: stringOrUndefined(args.simulatorName),
         simulatorId: stringOrUndefined(args.simulatorId),
+        deviceName: stringOrUndefined(args.deviceName),
+        deviceId: stringOrUndefined(args.deviceId),
         buildMode: stringOrUndefined(args.buildMode) as BuildMode | undefined,
         platform: stringOrUndefined(args.platform) as BuildPlatform | undefined,
         streaming: booleanOrUndefined(args.streaming),

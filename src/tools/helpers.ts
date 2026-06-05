@@ -25,6 +25,8 @@ export function applyDefaults(args: JsonObject): JsonObject {
   if (defaults.target && merged.target === undefined) merged.target = defaults.target;
   if (defaults.simulatorName && merged.simulatorName === undefined) merged.simulatorName = defaults.simulatorName;
   if (defaults.simulatorId && merged.simulatorId === undefined) merged.simulatorId = defaults.simulatorId;
+  if (defaults.deviceName && merged.deviceName === undefined) merged.deviceName = defaults.deviceName;
+  if (defaults.deviceId && merged.deviceId === undefined) merged.deviceId = defaults.deviceId;
   if (defaults.buildMode && defaults.buildMode !== 'none' && merged.buildMode === undefined) merged.buildMode = defaults.buildMode;
   if (defaults.platform && defaults.platform !== 'none' && merged.platform === undefined) merged.platform = defaults.platform;
   if (merged.streaming === undefined) merged.streaming = defaults.streaming ?? false;

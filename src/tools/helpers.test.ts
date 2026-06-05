@@ -72,6 +72,15 @@ describe('applyDefaults', () => {
     expect(applyDefaults({})).toEqual({ simulatorId: 'ABC-123', streaming: false });
   });
 
+  it('merges deviceName and deviceId', () => {
+    setDefaults({ deviceName: 'My iPhone', deviceId: '00008110-ABC' });
+    expect(applyDefaults({})).toEqual({
+      deviceName: 'My iPhone',
+      deviceId: '00008110-ABC',
+      streaming: false,
+    });
+  });
+
   it('merges buildMode', () => {
     setDefaults({ buildMode: 'debug' });
     expect(applyDefaults({})).toEqual({ buildMode: 'debug', streaming: false });

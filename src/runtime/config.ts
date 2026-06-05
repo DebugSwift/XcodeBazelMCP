@@ -79,6 +79,8 @@ export function activateProfile(name: string): SessionDefaults {
     target: profile.defaultTarget || config.defaults.target,
     simulatorName: profile.defaultSimulatorName || config.defaults.simulatorName,
     simulatorId: profile.defaultSimulatorId || config.defaults.simulatorId,
+    deviceName: profile.defaultDeviceName || config.defaults.deviceName,
+    deviceId: profile.defaultDeviceId || config.defaults.deviceId,
     buildMode: profile.defaultBuildMode || config.defaults.buildMode,
     platform: profile.defaultPlatform || config.defaults.platform,
     streaming: profile.streaming ?? config.defaults.streaming,
@@ -132,6 +134,12 @@ function applyFileConfig(fileConfig: FileConfig, filePath: string): void {
   }
   if (fileConfig.defaultSimulatorName) {
     config.defaults.simulatorName = config.defaults.simulatorName || fileConfig.defaultSimulatorName;
+  }
+  if (fileConfig.defaultDeviceName) {
+    config.defaults.deviceName = config.defaults.deviceName || fileConfig.defaultDeviceName;
+  }
+  if (fileConfig.defaultDeviceId) {
+    config.defaults.deviceId = config.defaults.deviceId || fileConfig.defaultDeviceId;
   }
   if (fileConfig.defaultPlatform) {
     config.defaults.platform = config.defaults.platform || fileConfig.defaultPlatform;

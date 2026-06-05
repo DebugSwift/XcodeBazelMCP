@@ -22,7 +22,7 @@ import {
 } from '../core/bazel.js';
 import { bootSimulatorIfNeeded, findAppBundle, installApp, launchApp, readBundleId, resolveSimulator } from '../core/simulators.js';
 import { withTestSimulatorHooks } from '../core/test-simulator.js';
-import { installAppOnDevice, launchAppOnDevice, resolveDevice } from '../core/devices.js';
+import { deployBuiltAppToDevice } from '../core/device-deploy.js';
 import { swiftBuildStreaming, swiftTestStreaming, type SwiftBuildConfiguration } from '../core/swift-package.js';
 import { getConfig } from '../runtime/config.js';
 import { formatCommandResult, structuredCommandResult, toolResult, toolText } from '../utils/output.js';
@@ -114,11 +114,29 @@ export async function callBazelToolStreaming(
   }
 
   if (name === 'bazel_ios_build_and_run' && finalResult.exitCode === 0) {
+    const platform = stringOrUndefined(args.platform) === 'device' ? 'device' : 'simulator';
+    if (platform === 'device') {
+      return deployBuiltAppToDevice({
+        target: requireLabel(args.target),
+        buildResult: finalResult,
+        deviceId: stringOrUndefined(args.deviceId),
+        deviceName: stringOrUndefined(args.deviceName),
+        launchArgs: asStringArray(args.launchArgs, 'launchArgs'),
+        launchEnv: (args.launchEnv as Record<string, string> | undefined) || {},
+      });
+    }
     return handleBuildAndRunPostBuild(args as BuildAndRunArgs, finalResult);
   }
 
   if (name === 'bazel_ios_device_build_and_run' && finalResult.exitCode === 0) {
-    return handleDeviceBuildAndRunPostBuild(args as BuildArgs, finalResult);
+    return deployBuiltAppToDevice({
+      target: requireLabel(args.target),
+      buildResult: finalResult,
+      deviceId: stringOrUndefined(args.deviceId),
+      deviceName: stringOrUndefined(args.deviceName),
+      launchArgs: asStringArray(args.launchArgs, 'launchArgs'),
+      launchEnv: (args.launchEnv as Record<string, string> | undefined) || {},
+    });
   }
 
   const output = cleanupSummary
@@ -174,7 +192,8 @@ function buildStreamingBazelArgs(name: string, args: JsonObject): string[] {
       return buildCommandArgs(args as BuildArgs);
     }
     case 'bazel_ios_build_and_run': {
-      const a = { ...args, platform: 'simulator' } as BuildArgs;
+      const platform = stringOrUndefined(args.platform) === 'device' ? 'device' : 'simulator';
+      const a = { ...args, platform } as BuildArgs;
       return buildCommandArgs(a);
     }
     case 'bazel_ios_device_build_and_run': {
@@ -387,59 +406,3 @@ async function handleBuildAndRunPostBuild(
   return toolText(prependWarning(lines.join('\n'), simWarning), launchResult.exitCode !== 0);
 }
 
-async function handleDeviceBuildAndRunPostBuild(
-  args: BuildArgs,
-  buildResult: CommandResult,
-) {
-  const config = getConfig();
-  const appPath = findAppBundle(config.workspacePath, requireLabel(args.target));
-  if (!appPath) {
-    return toolText(
-      `${formatCommandResult(buildResult)}\n\nBuild succeeded but .app bundle not found in bazel-bin.`,
-      true,
-    );
-  }
-
-  const device = await resolveDevice({
-    deviceId: stringOrUndefined(args.deviceId),
-    deviceName: stringOrUndefined(args.deviceName),
-  });
-
-  const installResult = await installAppOnDevice(device.udid, appPath);
-  if (installResult.exitCode !== 0) {
-    return toolText(
-      `${formatCommandResult(buildResult)}\n\nInstall failed:\n${formatCommandResult(installResult)}`,
-      true,
-    );
-  }
-
-  let bundleId: string;
-  try {
-    bundleId = readBundleId(appPath);
-  } catch (err) {
-    return toolText(
-      `${formatCommandResult(buildResult)}\n\nBuild and install succeeded but failed to read bundle ID: ${(err as Error).message}`,
-      true,
-    );
-  }
-  const launchResult = await launchAppOnDevice(
-    device.udid,
-    bundleId,
-    asStringArray(args.launchArgs, 'launchArgs'),
-  );
-
-  const lines = [
-    formatCommandResult(buildResult),
-    '',
-    `App: ${appPath}`,
-    `Bundle ID: ${bundleId}`,
-    `Device: ${device.name} (${device.udid}) — iOS ${device.osVersion}`,
-    `Install: ${installResult.exitCode === 0 ? 'OK' : 'FAILED'}`,
-    `Launch: ${launchResult.exitCode === 0 ? 'OK' : 'FAILED'}`,
-  ];
-  if (launchResult.output.trim()) {
-    lines.push('', launchResult.output.trim());
-  }
-
-  return toolText(lines.join('\n'), launchResult.exitCode !== 0);
-}

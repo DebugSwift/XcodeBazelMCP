@@ -419,4 +419,36 @@ export async function unpairDevice(deviceId: string): Promise<CommandResult> {
   );
 }
 
+export function formatDeviceError(output: string): string | undefined {
+  const lower = output.toLowerCase();
+  if (
+    lower.includes('devicelocked')
+    || lower.includes('imagemounterdevicelocked')
+    || lower.includes('0xe80000e2')
+    || lower.includes('12040')
+  ) {
+    return 'Device is locked. Unlock your iPhone and keep the screen on, then retry with bazel_ios_device_install_app.';
+  }
+  if (lower.includes('nottrusted') || (lower.includes('pairing') && lower.includes('required'))) {
+    return 'Device does not trust this computer. Unlock the device, tap "Trust", then retry.';
+  }
+  if (lower.includes('developer mode') || lower.includes('developermode')) {
+    return 'Enable Developer Mode on the device: Settings → Privacy & Security → Developer Mode.';
+  }
+  if (lower.includes('provisioning') || lower.includes('mobileprovision') || lower.includes('signing')) {
+    return 'Code signing issue. Ensure a valid development certificate and provisioning profile are installed.';
+  }
+  return undefined;
+}
+
+export async function countSigningIdentities(): Promise<{ count: number; command: CommandResult }> {
+  const command = await runCommand(
+    'security',
+    ['find-identity', '-v', '-p', 'codesigning'],
+    { cwd: process.cwd(), timeoutSeconds: 15, maxOutput: 50_000 },
+  );
+  const match = command.output.match(/(\d+) valid identities found/);
+  return { count: match ? parseInt(match[1], 10) : 0, command };
+}
+
 export { readBundleId };

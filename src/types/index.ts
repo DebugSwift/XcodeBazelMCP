@@ -22,6 +22,8 @@ export interface SessionDefaults {
   target?: string;
   simulatorName?: string;
   simulatorId?: string;
+  deviceName?: string;
+  deviceId?: string;
   buildMode?: BuildMode;
   platform?: BuildPlatform;
   streaming?: boolean;
@@ -31,6 +33,8 @@ export interface ProfileConfig {
   defaultTarget?: string;
   defaultSimulatorName?: string;
   defaultSimulatorId?: string;
+  defaultDeviceName?: string;
+  defaultDeviceId?: string;
   defaultBuildMode?: BuildMode;
   defaultPlatform?: BuildPlatform;
   streaming?: boolean;
@@ -41,6 +45,8 @@ export interface FileConfig {
   bazelPath?: string;
   maxOutput?: number;
   defaultSimulatorName?: string;
+  defaultDeviceName?: string;
+  defaultDeviceId?: string;
   defaultPlatform?: BuildPlatform;
   defaultBuildMode?: BuildMode;
   defaultTarget?: string;
@@ -86,6 +92,8 @@ export interface BuildArgs extends JsonObject {
   platform?: BuildPlatform;
   simulatorName?: string;
   simulatorVersion?: string;
+  deviceId?: string;
+  deviceName?: string;
   configs?: string[];
   extraArgs?: string[];
   timeoutSeconds?: number;

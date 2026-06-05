@@ -82,6 +82,7 @@ export const WORKFLOWS: WorkflowInfo[] = [
     description: 'Build, install, launch, test, and manage physical iOS devices.',
     tools: [
       'bazel_ios_list_devices', 'bazel_ios_device_build_and_run',
+      'bazel_ios_device_get_app_path',
       'bazel_ios_device_install_app', 'bazel_ios_device_launch_app',
       'bazel_ios_device_stop_app', 'bazel_ios_device_test',
       'bazel_ios_device_screenshot', 'bazel_ios_device_log_start',
@@ -195,7 +196,7 @@ export const WORKFLOWS: WorkflowInfo[] = [
 const ALL_WORKFLOW_IDS = new Set(WORKFLOWS.map((w) => w.id));
 
 export const DEFAULT_WORKFLOWS = [
-  'build', 'test', 'simulator', 'app_lifecycle', 'project', 'session', 'agent_debug',
+  'build', 'test', 'simulator', 'app_lifecycle', 'device', 'project', 'session', 'agent_debug',
 ];
 
 export function validateWorkflowIds(ids: string[]): string[] {

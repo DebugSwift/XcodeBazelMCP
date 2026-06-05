@@ -12,6 +12,7 @@ import {
   testFilterArgs,
 } from '../../core/bazel.js';
 import { withTestSimulatorHooks } from '../../core/test-simulator.js';
+import { deployBuiltAppToDevice } from '../../core/device-deploy.js';
 import {
   bootSimulatorIfNeeded,
   findAppBundle,
@@ -101,7 +102,7 @@ export const definitions: ToolDefinition[] = [
   {
     name: 'bazel_ios_build_and_run',
     description:
-      'Build a Bazel iOS app, install it on a simulator, and launch it. One-shot build-run cycle.',
+      'Build a Bazel iOS app, install it on a simulator or physical device, and launch it. One-shot build-run cycle. Default platform is simulator; pass platform=device for physical device.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -110,9 +111,16 @@ export const definitions: ToolDefinition[] = [
           type: 'string',
           enum: ['none', 'debug', 'release', 'release_with_symbols'],
         },
+        platform: {
+          type: 'string',
+          enum: ['simulator', 'device'],
+          description: 'Deploy target. Defaults to simulator.',
+        },
         simulatorName: { type: 'string', description: 'Simulator device name.' },
         simulatorVersion: { type: 'string' },
         simulatorId: { type: 'string', description: 'Simulator UDID. Takes precedence over name.' },
+        deviceId: { type: 'string', description: 'Physical device UDID (when platform=device).' },
+        deviceName: { type: 'string', description: 'Physical device name (when platform=device).' },
         configs: { type: 'array', items: { type: 'string' } },
         startupArgs: { type: 'array', items: { type: 'string' } },
         extraArgs: { type: 'array', items: { type: 'string' } },
@@ -305,7 +313,8 @@ export async function handle(name: string, args: JsonObject): Promise<ToolCallRe
       );
     }
     case 'bazel_ios_build_and_run': {
-      const buildRunArgs = { ...args, platform: 'simulator' } as BuildAndRunArgs;
+      const platform = stringOrUndefined(args.platform) === 'device' ? 'device' : 'simulator';
+      const buildRunArgs = { ...args, platform } as BuildAndRunArgs;
       const buildResult = await runBazel(
         buildCommandArgs(buildRunArgs),
         numberOrUndefined(buildRunArgs.timeoutSeconds) || 1_800,
@@ -313,6 +322,17 @@ export async function handle(name: string, args: JsonObject): Promise<ToolCallRe
       );
       if (buildResult.exitCode !== 0) {
         return toolText(formatCommandResult(buildResult), true);
+      }
+
+      if (platform === 'device') {
+        return deployBuiltAppToDevice({
+          target: requireLabel(buildRunArgs.target),
+          buildResult,
+          deviceId: stringOrUndefined(buildRunArgs.deviceId),
+          deviceName: stringOrUndefined(buildRunArgs.deviceName),
+          launchArgs: asStringArray(buildRunArgs.launchArgs, 'launchArgs'),
+          launchEnv: (buildRunArgs.launchEnv as Record<string, string> | undefined) || {},
+        });
       }
 
       const config = getConfig();

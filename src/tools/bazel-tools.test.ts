@@ -52,6 +52,7 @@ describe('Bazel MCP tool definitions', () => {
       'bazel_ios_ui_dump',
       'bazel_ios_list_devices',
       'bazel_ios_device_build_and_run',
+      'bazel_ios_device_get_app_path',
       'bazel_ios_device_install_app',
       'bazel_ios_device_launch_app',
       'bazel_ios_device_stop_app',
@@ -126,7 +127,7 @@ describe('Bazel MCP tool definitions', () => {
     ];
     expect([...names].sort()).toEqual([...expected].sort());
     expect(new Set(names).size).toBe(names.length);
-    expect(bazelToolDefinitions.length).toBe(116);
+    expect(bazelToolDefinitions.length).toBe(117);
   });
 
   it('advertises startupArgs on every Bazel command tool that can need startup flags', () => {
