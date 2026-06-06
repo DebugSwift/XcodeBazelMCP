@@ -1,7 +1,7 @@
 {
   "mcpServers": {
     "XcodeBazelMCP": {
-      "command": "node",
+      "command": "~/.nvm/versions/node/v20.19.2/bin/node",
       "args": ["~/Projects/XcodeBazelMCP/dist/cli.js", "mcp"],
       "env": {
         "BAZEL_IOS_WORKSPACE": "~/Projects/XcodeBazelMCP/example_projects/BazelApp"
