@@ -1,8 +1,28 @@
-import { existsSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
 import type { CommandResult } from '../types/index.js';
 import { runCommand } from '../utils/process.js';
 import { readBundleId } from './simulators.js';
+
+/**
+ * Create a JSON output path inside a fresh private temp directory (0700 via
+ * mkdtemp). Avoids predictable `/tmp/...-<Date.now()>.json` names that are prone
+ * to symlink/TOCTOU races (CWE-377).
+ */
+function makeTempJsonPath(tag: string): string {
+  const dir = mkdtempSync(join(tmpdir(), 'xcodebazelmcp-'));
+  return join(dir, `${tag}.json`);
+}
+
+function cleanupTempJson(path: string): void {
+  try {
+    rmSync(dirname(path), { recursive: true, force: true });
+  } catch {
+    /* best effort */
+  }
+}
 
 interface PhysicalDevice {
   udid: string;
@@ -19,7 +39,7 @@ export async function listDevices(): Promise<{
   command: CommandResult;
   devices: PhysicalDevice[];
 }> {
-  const jsonOutputPath = `/tmp/xcodebazelmcp-devices-${Date.now()}.json`;
+  const jsonOutputPath = makeTempJsonPath('devices');
   const command = await runCommand(
     'xcrun',
     ['devicectl', 'list', 'devices', '--json-output', jsonOutputPath],
@@ -64,7 +84,7 @@ export async function listDevices(): Promise<{
   } catch {
     // JSON parse or read failed — return empty list with the command result
   } finally {
-    try { const { unlinkSync } = await import('node:fs'); unlinkSync(jsonOutputPath); } catch { /* best effort */ }
+    cleanupTempJson(jsonOutputPath);
   }
 
   return { command, devices };
@@ -89,7 +109,7 @@ export async function resolveDevice(options: {
 
   if (options.deviceName) {
     const normalize = (s: string) =>
-      s.toLowerCase().replace(/[\u2018\u2019\u201A\u201B]/g, "'").replace(/[\u201C\u201D\u201E\u201F]/g, '"');
+      s.trim().toLowerCase().replace(/[\u2018\u2019\u201A\u201B]/g, "'").replace(/[\u201C\u201D\u201E\u201F]/g, '"');
     const needle = normalize(options.deviceName);
     const match = connected.find(
       (d) => normalize(d.name) === needle,
@@ -155,7 +175,7 @@ export async function terminateAppOnDevice(
   bundleId: string,
 ): Promise<CommandResult> {
   // First try to find PID via `devicectl device info apps`
-  const appsJsonPath = `/tmp/xcodebazelmcp-apps-${Date.now()}.json`;
+  const appsJsonPath = makeTempJsonPath('apps');
   const appsResult = await runCommand(
     'xcrun',
     ['devicectl', 'device', 'info', 'apps', '--device', deviceId, '--json-output', appsJsonPath],
@@ -164,7 +184,7 @@ export async function terminateAppOnDevice(
 
   let executableName: string | undefined;
   try {
-    const { readFileSync, unlinkSync } = await import('node:fs');
+    const { readFileSync } = await import('node:fs');
     if (appsResult.exitCode === 0) {
       const raw = readFileSync(appsJsonPath, 'utf8');
       const parsed = JSON.parse(raw) as {
@@ -187,13 +207,13 @@ export async function terminateAppOnDevice(
         }
       }
     }
-    try { unlinkSync(appsJsonPath); } catch { /* best effort */ }
+    cleanupTempJson(appsJsonPath);
   } catch {
-    try { const { unlinkSync } = await import('node:fs'); unlinkSync(appsJsonPath); } catch { /* best effort */ }
+    cleanupTempJson(appsJsonPath);
   }
 
   // Now get process list and match
-  const jsonPath = `/tmp/xcodebazelmcp-procs-${Date.now()}.json`;
+  const jsonPath = makeTempJsonPath('procs');
   const listResult = await runCommand(
     'xcrun',
     ['devicectl', 'device', 'info', 'processes', '--device', deviceId, '--json-output', jsonPath],
@@ -206,9 +226,9 @@ export async function terminateAppOnDevice(
 
   let pid: number | undefined;
   try {
-    const { readFileSync, unlinkSync } = await import('node:fs');
+    const { readFileSync } = await import('node:fs');
     const raw = readFileSync(jsonPath, 'utf8');
-    unlinkSync(jsonPath);
+    cleanupTempJson(jsonPath);
     const parsed = JSON.parse(raw) as {
       result?: {
         runningProcesses?: Array<{
@@ -238,7 +258,7 @@ export async function terminateAppOnDevice(
 
     pid = proc?.processIdentifier;
   } catch {
-    try { const { unlinkSync } = await import('node:fs'); unlinkSync(jsonPath); } catch { /* best effort */ }
+    cleanupTempJson(jsonPath);
   }
 
   if (!pid) {
@@ -249,6 +269,7 @@ export async function terminateAppOnDevice(
       exitCode: 1,
       durationMs: 0,
       truncated: false,
+      failureKind: 'nonzero-exit',
     };
   }
 
@@ -256,6 +277,27 @@ export async function terminateAppOnDevice(
     'xcrun',
     ['devicectl', 'device', 'process', 'terminate', '--device', deviceId, '--pid', String(pid)],
     { cwd: process.cwd(), timeoutSeconds: 30, maxOutput: 50_000 },
+  );
+}
+
+export async function uninstallAppOnDevice(
+  deviceId: string,
+  bundleId: string,
+): Promise<CommandResult> {
+  return runCommand(
+    'xcrun',
+    ['devicectl', 'device', 'uninstall', 'app', '--device', deviceId, bundleId],
+    { cwd: process.cwd(), timeoutSeconds: 120, maxOutput: 100_000 },
+  );
+}
+
+export async function listAppsOnDevice(
+  deviceId: string,
+): Promise<CommandResult> {
+  return runCommand(
+    'xcrun',
+    ['devicectl', 'device', 'info', 'apps', '--device', deviceId],
+    { cwd: process.cwd(), timeoutSeconds: 60, maxOutput: 500_000 },
   );
 }
 
@@ -315,6 +357,9 @@ export async function screenshotDevice(
   return result;
 }
 
+/** Keep at most this many chars of streamed device-log output (sliding tail). */
+const DEVICE_LOG_MAX = 500_000;
+
 interface DeviceLogCapture {
   child: ChildProcess;
   getCaptured: () => string;
@@ -338,11 +383,15 @@ export async function startDeviceLogCapture(
 
     let captured = '';
     let stderrBuf = '';
-    child.stdout?.on('data', (chunk: Buffer) => { captured += chunk.toString(); });
+    const appendCapped = (text: string) => {
+      captured += text;
+      if (captured.length > DEVICE_LOG_MAX) captured = captured.slice(-DEVICE_LOG_MAX);
+    };
+    child.stdout?.on('data', (chunk: Buffer) => appendCapped(chunk.toString()));
     child.stderr?.on('data', (chunk: Buffer) => {
       const text = chunk.toString();
       stderrBuf += text;
-      captured += text;
+      appendCapped(text);
     });
 
     // Wait briefly to detect fast failures (no tunneld, device not found, etc.)
@@ -366,8 +415,12 @@ export async function startDeviceLogCapture(
   const child = spawn('idevicesyslog', logArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
 
   let captured = '';
-  child.stdout?.on('data', (chunk: Buffer) => { captured += chunk.toString(); });
-  child.stderr?.on('data', (chunk: Buffer) => { captured += chunk.toString(); });
+  const appendCapped = (text: string) => {
+    captured += text;
+    if (captured.length > DEVICE_LOG_MAX) captured = captured.slice(-DEVICE_LOG_MAX);
+  };
+  child.stdout?.on('data', (chunk: Buffer) => appendCapped(chunk.toString()));
+  child.stderr?.on('data', (chunk: Buffer) => appendCapped(chunk.toString()));
 
   return { child, getCaptured: () => captured, tool: 'idevicesyslog' };
 }
@@ -448,7 +501,11 @@ export async function countSigningIdentities(): Promise<{ count: number; command
     { cwd: process.cwd(), timeoutSeconds: 15, maxOutput: 50_000 },
   );
   const match = command.output.match(/(\d+) valid identities found/);
-  return { count: match ? parseInt(match[1], 10) : 0, command };
+  if (match) return { count: parseInt(match[1], 10), command };
+  // Fallback for `security` phrasings without the summary line: count the
+  // enumerated `  1) <hash> "<name>"` identity lines.
+  const lineCount = (command.output.match(/^\s*\d+\)\s+[0-9A-F]{20,}/gim) || []).length;
+  return { count: lineCount, command };
 }
 
 export { readBundleId };

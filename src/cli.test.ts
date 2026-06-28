@@ -17,6 +17,7 @@ describe('CLI help', () => {
     expect(out).toContain('Usage:');
     expect(out).toContain('xcodebazelmcp mcp');
     expect(out).toContain('Build & Run:');
+    expect(out).toContain('--launch-env KEY=VAL');
     expect(out).toContain('Query & Inspect:');
     expect(out).toContain('Config & Defaults:');
     expect(out).toContain('Simulator:');
@@ -40,13 +41,34 @@ describe('CLI help', () => {
   });
 });
 
+describe('CLI error handling', () => {
+  it('prints a clean error (no stack trace) for an invalid label', () => {
+    let stdout = '';
+    let stderr = '';
+    let exitCode = 0;
+    try {
+      stdout = run(['deps', 'not a label']);
+    } catch (e) {
+      const err = e as { status?: number; stdout?: string; stderr?: string };
+      exitCode = err.status ?? 1;
+      stdout = err.stdout ?? '';
+      stderr = err.stderr ?? '';
+    }
+    expect(exitCode).toBe(1);
+    const combined = stdout + stderr;
+    expect(combined).toContain('Error: target must be a Bazel label');
+    expect(combined).not.toContain('at requireLabel');
+    expect(combined).not.toContain('.js:');
+  });
+});
+
 describe('CLI tools', () => {
-  it('lists all 117 tools', () => {
+  it('lists all 125 tools', () => {
     const out = run(['tools']);
     const toolLines = out
       .split('\n')
       .filter((line) => line.match(/^[a-z_]+$/));
-    expect(toolLines.length).toBe(117);
+    expect(toolLines.length).toBe(125);
     expect(out).toContain('bazel_ios_build');
     expect(out).toContain('bazel_macos_build');
     expect(out).toContain('bazel_tvos_build');

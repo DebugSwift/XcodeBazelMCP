@@ -3,6 +3,8 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   test: {
     include: ['src/**/*.test.ts'],
+    // Don't write the persistent command log to the developer's home during tests.
+    env: { BAZEL_IOS_COMMAND_LOG_DISABLE: '1' },
     coverage: {
       provider: 'v8',
       include: ['src/**/*.ts'],

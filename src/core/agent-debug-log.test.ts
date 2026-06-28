@@ -61,6 +61,18 @@ describe('agent-debug-log', () => {
     expect(result.hypothesisStatusHints.B).toBe('REJECTED');
   });
 
+  it('hypothesis status uses the latest verdict (REJECTED after CONFIRMED wins)', () => {
+    writeFileSync(
+      logPath,
+      [
+        '{"hypothesisId":"H","message":"CONFIRMED early"}',
+        '{"hypothesisId":"H","message":"REJECTED later, was wrong"}',
+      ].join('\n'),
+    );
+    const result = readAgentDebugLog({ logPath });
+    expect(result.hypothesisStatusHints.H).toBe('REJECTED');
+  });
+
   it('readAgentDebugLog filters by hypothesisId and runId', () => {
     writeFileSync(
       logPath,

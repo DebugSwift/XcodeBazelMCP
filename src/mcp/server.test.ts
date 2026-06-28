@@ -77,7 +77,7 @@ describe('MCP server protocol', () => {
 
     const toolsResp = lines.map((l) => JSON.parse(l)).find((r) => r.id === 2);
     expect(toolsResp).toBeDefined();
-    expect(toolsResp.result.tools).toHaveLength(52);
+    expect(toolsResp.result.tools).toHaveLength(57);
     const names = toolsResp.result.tools.map((t: { name: string }) => t.name);
     expect(names).toContain('bazel_ios_build');
     expect(names).toContain('bazel_ios_test');

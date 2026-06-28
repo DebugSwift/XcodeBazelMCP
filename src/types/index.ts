@@ -66,14 +66,35 @@ export interface RuntimeConfig {
   enabledWorkflows?: string[];
 }
 
+export type FailureKind = 'ok' | 'spawn-error' | 'timeout' | 'signal' | 'nonzero-exit';
+
 export interface CommandResult {
   command: string;
   args: string[];
   exitCode: number;
   signal?: NodeJS.Signals | null;
   durationMs: number;
+  /** Combined stdout+stderr in arrival order (head+tail truncated). */
   output: string;
   truncated: boolean;
+  /** Separate stdout channel (head+tail truncated). */
+  stdout?: string;
+  /** Separate stderr channel — where Bazel/Swift write real diagnostics. */
+  stderr?: string;
+  /** Explicit failure classification so spawn errors != crashes != timeouts. */
+  failureKind?: FailureKind;
+  /** True when the command was killed by the timeout watchdog. */
+  timedOut?: boolean;
+  /** Configured timeout (seconds) for this invocation. */
+  timeoutSeconds?: number;
+  /** Approximate characters dropped by head+tail truncation. */
+  bytesDropped?: number;
+  /** For spawn errors: the underlying errno code (ENOENT, EACCES, ...). */
+  spawnErrorCode?: string;
+  /** Correlation id linking the MCP request, the spawned command, and the log line. */
+  id?: string;
+  /** Optional resolved-config context surfaced on failure (bazel path, workspace, startup args). */
+  context?: Record<string, string>;
 }
 
 export type TargetKind =

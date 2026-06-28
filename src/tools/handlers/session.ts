@@ -106,6 +106,9 @@ export const definitions: ToolDefinition[] = [
   },
 ];
 
+const VALID_BUILD_MODES: BuildMode[] = ['none', 'debug', 'release', 'release_with_symbols'];
+const VALID_DEFAULT_PLATFORMS: BuildPlatform[] = ['none', 'simulator', 'device'];
+
 const HANDLED = new Set(definitions.map(d => d.name));
 
 export function canHandle(name: string): boolean {
@@ -125,7 +128,7 @@ export async function handle(name: string, args: JsonObject): Promise<ToolCallRe
     case 'bazel_ios_health': {
       const os = await import('node:os');
       const { resolve: resolvePath } = await import('node:path');
-      const { countSigningIdentities, listDevices } = await import('../../core/devices.js');
+      const { countSigningIdentities, listDevices, findPymobiledevice3 } = await import('../../core/devices.js');
       const config = getConfig();
       assertBazelWorkspace(config.workspacePath);
 
@@ -149,6 +152,8 @@ export async function handle(name: string, args: JsonObject): Promise<ToolCallRe
         `  path: ${config.workspacePath}`,
         `  bazel: ${config.bazelPath}`,
         `  config: ${config.configFilePath || '(none)'}`,
+        `  maxOutput: ${config.maxOutput}`,
+        `  startupArgs: ${process.env.BAZEL_IOS_STARTUP_ARGS || '(none)'}`,
         `  BAZEL_IOS_WORKSPACE: ${process.env.BAZEL_IOS_WORKSPACE || '(not set)'}`,
         `  MODULE.bazel: ${hasModuleBazel ? '✅ found' : '❌ missing'}`,
         `  WORKSPACE: ${hasWorkspace ? '✅ found' : '⚠️ missing (using MODULE.bazel)'}`,
@@ -164,12 +169,14 @@ export async function handle(name: string, args: JsonObject): Promise<ToolCallRe
         lines.push('  ⚠️ BAZEL_IOS_WORKSPACE not set — using cwd or config file workspacePath.');
       }
 
-      const [bazelVersion, xcode, simctl, deviceList, signing] = await Promise.all([
+      const [bazelVersion, xcode, simctl, deviceList, signing, idbWhich, pymPath] = await Promise.all([
         runCommand(config.bazelPath, ['--version'], { cwd: config.workspacePath, timeoutSeconds: 20, maxOutput: config.maxOutput }),
         runCommand('xcodebuild', ['-version'], { cwd: config.workspacePath, timeoutSeconds: 20, maxOutput: config.maxOutput }),
         runCommand('xcrun', ['simctl', 'list', 'devices', 'available', '--json'], { cwd: config.workspacePath, timeoutSeconds: 30, maxOutput: config.maxOutput }),
         listDevices(),
         countSigningIdentities(),
+        runCommand('which', ['idb'], { cwd: config.workspacePath, timeoutSeconds: 5, maxOutput: 1_000 }),
+        findPymobiledevice3(),
       ]);
 
       const connectedDevices = deviceList.devices.filter((d) => d.state === 'connected');
@@ -182,6 +189,8 @@ export async function handle(name: string, args: JsonObject): Promise<ToolCallRe
         `  simctl: ${simctl.exitCode === 0 ? '✅ available' : '❌ unavailable'}`,
         `  devicectl: ${deviceList.command.exitCode === 0 ? '✅ available' : `❌ exit ${deviceList.command.exitCode}`}`,
         `  codesigning identities: ${signing.command.exitCode === 0 ? `${signing.count} valid` : `❌ exit ${signing.command.exitCode}`}`,
+        `  idb (UI automation): ${idbWhich.exitCode === 0 ? `✅ ${idbWhich.output.trim()}` : '⚠️ not found — UI automation falls back to CGEvent (less reliable). Install: brew install idb-companion'}`,
+        `  pymobiledevice3 (device screenshots/logs): ${pymPath ? `✅ ${pymPath}` : '⚠️ not found — device screenshots/logs on iOS 17+ need it. Install: pip3 install pymobiledevice3'}`,
       );
 
       lines.push('', 'Physical Devices');
@@ -246,14 +255,22 @@ export async function handle(name: string, args: JsonObject): Promise<ToolCallRe
           .map(([k, v]) => `  ${k}: ${v}`);
         return toolText(`Profile "${args.profile}" activated.\n\nSession defaults:\n${lines.join('\n')}`);
       }
+      const buildMode = stringOrUndefined(args.buildMode);
+      if (buildMode !== undefined && !VALID_BUILD_MODES.includes(buildMode as BuildMode)) {
+        throw new Error(`Invalid buildMode "${buildMode}". Expected one of: ${VALID_BUILD_MODES.join(', ')}.`);
+      }
+      const platform = stringOrUndefined(args.platform);
+      if (platform !== undefined && !VALID_DEFAULT_PLATFORMS.includes(platform as BuildPlatform)) {
+        throw new Error(`Invalid platform "${platform}". Expected one of: ${VALID_DEFAULT_PLATFORMS.join(', ')}.`);
+      }
       const updated = setDefaults({
         target: stringOrUndefined(args.target),
         simulatorName: stringOrUndefined(args.simulatorName),
         simulatorId: stringOrUndefined(args.simulatorId),
         deviceName: stringOrUndefined(args.deviceName),
         deviceId: stringOrUndefined(args.deviceId),
-        buildMode: stringOrUndefined(args.buildMode) as BuildMode | undefined,
-        platform: stringOrUndefined(args.platform) as BuildPlatform | undefined,
+        buildMode: buildMode as BuildMode | undefined,
+        platform: platform as BuildPlatform | undefined,
         streaming: booleanOrUndefined(args.streaming),
       });
       const lines = Object.entries(updated)

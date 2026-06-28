@@ -115,6 +115,22 @@ describe('compareVersions – edge cases', () => {
     expect(compareVersions('1.0.0.0.0', '1')).toBe(0);
     expect(compareVersions('1.0.0.0.1', '1')).toBe(1);
   });
+
+  it('treats a prerelease as lower precedence than the release', () => {
+    expect(compareVersions('2.5.0', '2.5.0-beta.1')).toBe(1);
+    expect(compareVersions('2.5.0-beta.1', '2.5.0')).toBe(-1);
+  });
+
+  it('orders prerelease identifiers', () => {
+    expect(compareVersions('2.5.0-beta.1', '2.5.0-beta.2')).toBe(-1);
+    expect(compareVersions('1.0.0-alpha', '1.0.0-beta')).toBe(-1);
+    expect(compareVersions('1.0.0-alpha.1', '1.0.0-alpha')).toBe(1);
+    expect(compareVersions('2.6.0-beta.1', '2.6.0-beta.1')).toBe(0);
+  });
+
+  it('strips build metadata', () => {
+    expect(compareVersions('1.0.0+build5', '1.0.0+build9')).toBe(0);
+  });
 });
 
 describe('detectInstallMethod – value check', () => {
@@ -208,7 +224,7 @@ describe('performUpgrade', () => {
     await performUpgrade('source');
 
     expect(mockRunCommand).toHaveBeenCalledTimes(3);
-    expect(mockRunCommand).toHaveBeenNthCalledWith(1, 'git', ['pull', '--rebase'], expect.any(Object));
+    expect(mockRunCommand).toHaveBeenNthCalledWith(1, 'git', ['pull', '--rebase', '--autostash'], expect.any(Object));
     expect(mockRunCommand).toHaveBeenNthCalledWith(2, 'npm', ['install'], expect.any(Object));
     expect(mockRunCommand).toHaveBeenNthCalledWith(3, 'npm', ['run', 'build'], expect.any(Object));
   });

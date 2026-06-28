@@ -3,6 +3,17 @@ import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import type { FileConfig, ProfileConfig, RuntimeConfig, SessionDefaults } from '../types/index.js';
 
+/** Expand a leading `~` or `~/` to the user's home directory before resolving. */
+export function expandTilde(p: string): string {
+  if (p === '~') return homedir();
+  if (p.startsWith('~/')) return join(homedir(), p.slice(2));
+  return p;
+}
+
+function resolvePath(p: string): string {
+  return resolve(expandTilde(p));
+}
+
 const DEFAULT_WORKSPACE = process.env.BAZEL_IOS_WORKSPACE || process.cwd();
 const DEFAULT_BAZEL = process.env.BAZEL_PATH || process.env.MCP_BAZEL_PATH || 'bazel';
 const DEFAULT_MAX_OUTPUT = Number(process.env.BAZEL_IOS_MCP_MAX_OUTPUT || 200_000);
@@ -11,8 +22,8 @@ const CONFIG_FILE_NAMES = ['config.yaml', 'config.yml'];
 const CONFIG_DIR = '.xcodebazelmcp';
 
 let config: RuntimeConfig = {
-  workspacePath: resolve(DEFAULT_WORKSPACE),
-  bazelPath: DEFAULT_BAZEL,
+  workspacePath: resolvePath(DEFAULT_WORKSPACE),
+  bazelPath: expandTilde(DEFAULT_BAZEL),
   maxOutput: DEFAULT_MAX_OUTPUT,
   defaults: {},
   profiles: {},
@@ -35,8 +46,8 @@ export function getConfig(): RuntimeConfig {
 export function setWorkspace(workspacePath: string, bazelPath?: string): RuntimeConfig {
   config = {
     ...config,
-    workspacePath: resolve(workspacePath),
-    bazelPath: bazelPath || config.bazelPath,
+    workspacePath: resolvePath(workspacePath),
+    bazelPath: bazelPath ? expandTilde(bazelPath) : config.bazelPath,
   };
   configLoaded = false;
   return getConfig();
@@ -124,10 +135,10 @@ function applyFileConfig(fileConfig: FileConfig, filePath: string): void {
   config.configFilePath = filePath;
 
   if (fileConfig.workspacePath && !process.env.BAZEL_IOS_WORKSPACE) {
-    config.workspacePath = resolve(fileConfig.workspacePath);
+    config.workspacePath = resolvePath(fileConfig.workspacePath);
   }
   if (fileConfig.bazelPath && !process.env.BAZEL_PATH && !process.env.MCP_BAZEL_PATH) {
-    config.bazelPath = fileConfig.bazelPath;
+    config.bazelPath = expandTilde(fileConfig.bazelPath);
   }
   if (fileConfig.maxOutput && !process.env.BAZEL_IOS_MCP_MAX_OUTPUT) {
     config.maxOutput = fileConfig.maxOutput;
@@ -204,7 +215,7 @@ export function parseConfigYaml(content: string): FileConfig {
       if (key === 'enabledWorkflows' && rawValue) {
         result[key] = rawValue.split(',').map((s) => s.trim()).filter(Boolean);
       } else {
-        result[key] = parseValue(rawValue);
+        result[key] = parseValue(rawValue, key);
       }
     } else if (inProfiles && indent === 2 && !rawValue) {
       // profile name line like "  myapp:"
@@ -214,7 +225,7 @@ export function parseConfigYaml(content: string): FileConfig {
       currentProfileName = key;
       currentProfile = {};
     } else if (inProfiles && indent >= 4 && currentProfileName) {
-      currentProfile[key] = parseValue(rawValue);
+      currentProfile[key] = parseValue(rawValue, key);
     }
   }
 
@@ -229,9 +240,27 @@ export function parseConfigYaml(content: string): FileConfig {
   return result as unknown as FileConfig;
 }
 
-function parseValue(raw: string): string | number | boolean {
-  if (raw === 'true') return true;
-  if (raw === 'false') return false;
-  if (/^\d+(\.\d+)?$/.test(raw)) return Number(raw);
-  return raw;
+/**
+ * Config keys that are always strings. Without this, a value like
+ * `defaultSimulatorName: 16` would be coerced to the number 16 and fail the
+ * later string-typed lookups (e.g. simulator name match).
+ */
+const STRING_VALUED_KEYS = new Set([
+  'workspacePath', 'bazelPath',
+  'defaultTarget', 'defaultSimulatorName', 'defaultSimulatorId',
+  'defaultDeviceName', 'defaultDeviceId', 'defaultPlatform', 'defaultBuildMode',
+]);
+
+function parseValue(raw: string, key?: string): string | number | boolean {
+  const unquoted =
+    (raw.startsWith('"') && raw.endsWith('"') && raw.length >= 2) ||
+    (raw.startsWith("'") && raw.endsWith("'") && raw.length >= 2)
+      ? raw.slice(1, -1)
+      : raw;
+  if (key && STRING_VALUED_KEYS.has(key)) return unquoted;
+  if (unquoted === 'true') return true;
+  if (unquoted === 'false') return false;
+  // Only coerce to number when the original token was unquoted.
+  if (unquoted === raw && /^\d+(\.\d+)?$/.test(unquoted)) return Number(unquoted);
+  return unquoted;
 }

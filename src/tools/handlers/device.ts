@@ -13,6 +13,7 @@ import {
   formatDeviceError,
   installAppOnDevice,
   launchAppOnDevice,
+  listAppsOnDevice,
   listDevicePairs,
   listDevices,
   pairDevice,
@@ -20,6 +21,7 @@ import {
   screenshotDevice,
   startDeviceLogCapture,
   terminateAppOnDevice,
+  uninstallAppOnDevice,
   unpairDevice,
 } from '../../core/devices.js';
 import { findAppBundle, readBundleId } from '../../core/simulators.js';
@@ -117,6 +119,30 @@ export const definitions: ToolDefinition[] = [
         },
       },
       required: ['bundleId'],
+    },
+  },
+  {
+    name: 'bazel_ios_device_uninstall_app',
+    description: 'Uninstall an app from a connected physical iOS device by bundle identifier.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        bundleId: { type: 'string', description: 'App bundle identifier.' },
+        deviceId: { type: 'string', description: 'Device UDID.' },
+        deviceName: { type: 'string', description: 'Device name (alternative to deviceId).' },
+      },
+      required: ['bundleId'],
+    },
+  },
+  {
+    name: 'bazel_ios_device_list_apps',
+    description: 'List installed apps on a connected physical iOS device (devicectl device info apps).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        deviceId: { type: 'string', description: 'Device UDID.' },
+        deviceName: { type: 'string', description: 'Device name (alternative to deviceId).' },
+      },
     },
   },
   {
@@ -341,9 +367,41 @@ export async function handle(name: string, args: JsonObject): Promise<ToolCallRe
         asStringArray(args.launchArgs, 'launchArgs'),
         (args.launchEnv as Record<string, string> | undefined) || {},
       );
-      return toolText(
-        `Device: ${device.name} (${device.udid})\n${formatCommandResult(launchResult)}`,
+      const launchHint = launchResult.exitCode !== 0 ? formatDeviceError(launchResult.output) : undefined;
+      const launchLines = [`Device: ${device.name} (${device.udid})`, formatCommandResult(launchResult)];
+      if (launchHint) launchLines.push('', launchHint);
+      return toolResult(
+        launchLines.join('\n'),
+        { ...structuredCommandResult(launchResult), device: device.name, bundleId: args.bundleId },
         launchResult.exitCode !== 0,
+      );
+    }
+    case 'bazel_ios_device_uninstall_app': {
+      if (typeof args.bundleId !== 'string' || !args.bundleId.trim()) throw new Error('bundleId is required.');
+      const device = await resolveDevice({
+        deviceId: stringOrUndefined(args.deviceId),
+        deviceName: stringOrUndefined(args.deviceName),
+      });
+      const result = await uninstallAppOnDevice(device.udid, args.bundleId);
+      const hint = result.exitCode !== 0 ? formatDeviceError(result.output) : undefined;
+      const lines = [`Uninstalled ${args.bundleId} from ${device.name} (${device.udid})`, formatCommandResult(result)];
+      if (hint) lines.push('', hint);
+      return toolResult(
+        lines.join('\n'),
+        { ...structuredCommandResult(result), device: device.name, bundleId: args.bundleId },
+        result.exitCode !== 0,
+      );
+    }
+    case 'bazel_ios_device_list_apps': {
+      const device = await resolveDevice({
+        deviceId: stringOrUndefined(args.deviceId),
+        deviceName: stringOrUndefined(args.deviceName),
+      });
+      const result = await listAppsOnDevice(device.udid);
+      return toolResult(
+        `Device: ${device.name} (${device.udid})\n${formatCommandResult(result)}`,
+        { ...structuredCommandResult(result), device: device.name },
+        result.exitCode !== 0,
       );
     }
     case 'bazel_ios_device_stop_app': {
@@ -353,8 +411,12 @@ export async function handle(name: string, args: JsonObject): Promise<ToolCallRe
         deviceName: stringOrUndefined(args.deviceName),
       });
       const result = await terminateAppOnDevice(device.udid, args.bundleId);
-      return toolText(
-        `App ${args.bundleId} terminated on ${device.name} (${device.udid})\n${formatCommandResult(result)}`,
+      const stopHint = result.exitCode !== 0 ? formatDeviceError(result.output) : undefined;
+      const stopLines = [`App ${args.bundleId} terminated on ${device.name} (${device.udid})`, formatCommandResult(result)];
+      if (stopHint) stopLines.push('', stopHint);
+      return toolResult(
+        stopLines.join('\n'),
+        { ...structuredCommandResult(result), device: device.name, bundleId: args.bundleId },
         result.exitCode !== 0,
       );
     }
@@ -391,8 +453,16 @@ export async function handle(name: string, args: JsonObject): Promise<ToolCallRe
         deviceName: stringOrUndefined(args.deviceName),
       });
       const result = await screenshotDevice(device.udid, args.outputPath);
-      return toolText(
-        `Screenshot saved to ${args.outputPath}\nDevice: ${device.name} (${device.udid})\n${formatCommandResult(result)}`,
+      const shotHint = result.exitCode !== 0 ? formatDeviceError(result.output) : undefined;
+      const shotLines = [
+        `Screenshot saved to ${args.outputPath}`,
+        `Device: ${device.name} (${device.udid})`,
+        formatCommandResult(result),
+      ];
+      if (shotHint) shotLines.push('', shotHint);
+      return toolResult(
+        shotLines.join('\n'),
+        { ...structuredCommandResult(result), device: device.name, outputPath: args.outputPath },
         result.exitCode !== 0,
       );
     }
@@ -417,8 +487,13 @@ export async function handle(name: string, args: JsonObject): Promise<ToolCallRe
       if (typeof args.captureId !== 'string') throw new Error('captureId is required.');
       const entry = deviceLogCaptures.get(args.captureId);
       if (!entry) throw new Error(`No active log capture with ID: ${args.captureId}`);
-      entry.child.kill('SIGINT');
-      await new Promise((r) => setTimeout(r, 500));
+      await new Promise<void>((resolve) => {
+        let settled = false;
+        const done = () => { if (!settled) { settled = true; resolve(); } };
+        entry.child.once('exit', done);
+        entry.child.kill('SIGINT');
+        setTimeout(done, 1_000).unref();
+      });
       const output = entry.getCaptured();
       deviceLogCaptures.delete(args.captureId);
       return toolText(`Log capture stopped.\nCapture ID: ${args.captureId}\n\n${output || '(no output captured)'}`);

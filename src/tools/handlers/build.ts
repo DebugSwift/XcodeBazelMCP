@@ -5,6 +5,8 @@ import {
   buildCommandArgs,
   configArgs,
   discoverExpression,
+  iosSimulatorCpuArg,
+  parseTargetLabels,
   requireLabel,
   runBazel,
   sanitizeQueryExpression,
@@ -400,7 +402,7 @@ export async function handle(name: string, args: JsonObject): Promise<ToolCallRe
       const bazelArgs = [
         'test',
         '--test_output=errors',
-        '--ios_multi_cpus=sim_arm64',
+        iosSimulatorCpuArg(),
         ...simulatorArgs(testArgs),
         ...configArgs(testArgs.configs),
         ...asStringArray(testArgs.extraArgs, 'extraArgs'),
@@ -442,13 +444,21 @@ export async function handle(name: string, args: JsonObject): Promise<ToolCallRe
       return toolText(formatCommandResult(commandResult), commandResult.exitCode !== 0);
     }
     case 'bazel_ios_discover_targets': {
-      const expression = discoverExpression((args.kind as TargetKind | undefined) || 'all', stringOrUndefined(args.scope));
+      const kind = (args.kind as TargetKind | undefined) || 'all';
+      const expression = discoverExpression(kind, stringOrUndefined(args.scope));
       const commandResult = await runBazel(
-        ['query', ...asStringArray(args.extraArgs, 'extraArgs'), expression],
+        ['query', '--output=label', ...asStringArray(args.extraArgs, 'extraArgs'), expression],
         numberOrUndefined(args.timeoutSeconds) || 600,
         asStringArray(args.startupArgs, 'startupArgs'),
       );
-      return toolText(formatCommandResult(commandResult), commandResult.exitCode !== 0);
+      if (commandResult.exitCode !== 0) {
+        return toolText(formatCommandResult(commandResult), true);
+      }
+      const targets = parseTargetLabels(commandResult.output);
+      const text = targets.length
+        ? `Found ${targets.length} ${kind} target(s):\n${targets.join('\n')}`
+        : `No ${kind} targets found in scope.`;
+      return toolResult(text, { count: targets.length, kind, targets });
     }
     case 'bazel_ios_target_info': {
       const target = requireLabel(args.target);
@@ -461,17 +471,20 @@ export async function handle(name: string, args: JsonObject): Promise<ToolCallRe
     }
     case 'bazel_ios_clean': {
       const cleanArgs = ['clean'];
-      if (args.expunge === true) cleanArgs.push('--expunge');
+      const expunge = args.expunge === true;
+      if (expunge) cleanArgs.push('--expunge');
       const commandResult = await runBazel(
         cleanArgs,
-        120,
+        // --expunge tears down the whole output base and can take minutes on a
+        // large repo; give it a much longer budget than a plain clean.
+        expunge ? 600 : 120,
         asStringArray(args.startupArgs, 'startupArgs'),
       );
       return toolText(formatCommandResult(commandResult), commandResult.exitCode !== 0);
     }
     case 'bazel_ios_deps': {
       const target = requireLabel(args.target);
-      const depth = typeof args.depth === 'number' ? args.depth : 1;
+      const depth = typeof args.depth === 'number' && Number.isFinite(args.depth) ? args.depth : 1;
       const expression = `deps(${target}, ${depth})`;
       const commandResult = await runBazel(
         ['query', expression],
@@ -497,7 +510,7 @@ export async function handle(name: string, args: JsonObject): Promise<ToolCallRe
       const bazelArgs = [
         'coverage',
         '--test_output=errors',
-        '--ios_multi_cpus=sim_arm64',
+        iosSimulatorCpuArg(),
         '--combined_report=lcov',
         ...simulatorArgs(testArgs),
         ...configArgs(testArgs.configs),

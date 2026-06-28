@@ -2,9 +2,11 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { homedir } from 'node:os';
 import {
   activateProfile,
   clearDefaults,
+  expandTilde,
   getActiveProfile,
   getConfig,
   getDefaults,
@@ -18,8 +20,14 @@ import {
 
 let tempDir: string;
 let configDir: string;
+let savedWorkspaceEnv: string | undefined;
 
 beforeEach(() => {
+  // Config file workspacePath/bazelPath are only honored when the matching env
+  // var is unset; clear it so these tests are stable for users who export
+  // BAZEL_IOS_WORKSPACE in their shell.
+  savedWorkspaceEnv = process.env.BAZEL_IOS_WORKSPACE;
+  delete process.env.BAZEL_IOS_WORKSPACE;
   tempDir = join(tmpdir(), `config-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
   mkdirSync(tempDir, { recursive: true });
   configDir = join(tempDir, '.xcodebazelmcp');
@@ -28,6 +36,11 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  if (savedWorkspaceEnv === undefined) {
+    delete process.env.BAZEL_IOS_WORKSPACE;
+  } else {
+    process.env.BAZEL_IOS_WORKSPACE = savedWorkspaceEnv;
+  }
   if (existsSync(tempDir)) {
     rmSync(tempDir, { recursive: true, force: true });
   }
@@ -89,6 +102,71 @@ profiles:
     const config = parseConfigYaml(yaml);
     expect((config as unknown as Record<string, unknown>).maxOutput).toBe(50000);
     expect((config as unknown as Record<string, unknown>).ratio).toBe(3.14);
+  });
+
+  it('strips surrounding double quotes from values (regression)', () => {
+    const yaml = `defaultDeviceName: "My iPhone"`.trim();
+    const config = parseConfigYaml(yaml);
+    expect(config.defaultDeviceName).toBe('My iPhone');
+  });
+
+  it('strips surrounding single quotes from values', () => {
+    const yaml = `defaultSimulatorName: 'iPhone 16 Pro'`.trim();
+    const config = parseConfigYaml(yaml);
+    expect(config.defaultSimulatorName).toBe('iPhone 16 Pro');
+  });
+
+  it('strips quotes from quoted profile values', () => {
+    const yaml = `
+profiles:
+  app-device:
+    defaultDeviceName: "My iPhone"
+    `.trim();
+    const config = parseConfigYaml(yaml);
+    expect(config.profiles!['app-device'].defaultDeviceName).toBe('My iPhone');
+  });
+
+  it('keeps a numeric-looking quoted string as a string', () => {
+    const yaml = `defaultSimulatorName: "12"`.trim();
+    const config = parseConfigYaml(yaml);
+    expect(config.defaultSimulatorName).toBe('12');
+  });
+
+  it('keeps string-valued keys as strings even when unquoted and numeric-looking', () => {
+    const config = parseConfigYaml(`defaultSimulatorName: 16\nmaxOutput: 50000`);
+    expect(config.defaultSimulatorName).toBe('16');
+    expect((config as unknown as Record<string, unknown>).maxOutput).toBe(50000);
+  });
+
+  it('keeps string-valued profile keys as strings', () => {
+    const config = parseConfigYaml(`profiles:\n  p:\n    defaultTarget: //a:b\n    defaultSimulatorName: 16`);
+    expect(config.profiles!.p.defaultSimulatorName as unknown).toBe('16');
+  });
+});
+
+describe('expandTilde', () => {
+  it('expands a bare ~ to the home directory', () => {
+    expect(expandTilde('~')).toBe(homedir());
+  });
+
+  it('expands ~/ prefixed paths', () => {
+    expect(expandTilde('~/projects/ios')).toBe(join(homedir(), 'projects/ios'));
+  });
+
+  it('leaves absolute and relative paths untouched', () => {
+    expect(expandTilde('/abs/path')).toBe('/abs/path');
+    expect(expandTilde('rel/path')).toBe('rel/path');
+    expect(expandTilde('/has~tilde/inside')).toBe('/has~tilde/inside');
+  });
+});
+
+describe('getConfig with tilde workspace path', () => {
+  it('resolves a ~ workspacePath from config under home (regression)', () => {
+    writeFileSync(join(configDir, 'config.yaml'), `workspacePath: ~/some-ios-workspace`);
+    setWorkspace(tempDir);
+    const config = getConfig();
+    expect(config.workspacePath).toBe(join(homedir(), 'some-ios-workspace'));
+    expect(config.workspacePath).not.toContain('~');
   });
 });
 

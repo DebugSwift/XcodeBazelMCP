@@ -150,4 +150,73 @@ describe('scaffold guards', () => {
       'already exists',
     );
   });
+
+  it('throws on an unknown template instead of producing a partial project', () => {
+    const outDir = join(testDir, 'bad-template');
+    expect(() =>
+      // @ts-expect-error intentionally passing an invalid template
+      scaffold({ outputPath: outDir, name: 'Bad', template: 'ios_widget' }),
+    ).toThrow('Unknown template');
+    expect(existsSync(join(outDir, 'MODULE.bazel'))).toBe(false);
+  });
+
+  it('rejects an invalid project name', () => {
+    const outDir = join(testDir, 'bad-name');
+    expect(() => scaffold({ outputPath: outDir, name: '1Bad', template: 'ios_app' })).toThrow(
+      'Invalid project name',
+    );
+  });
+
+  it('writes a custom bazelVersion to .bazelversion and an absolute config path', () => {
+    const outDir = join(testDir, 'bazel-version');
+    scaffold({ outputPath: outDir, name: 'App', template: 'ios_app', bazelVersion: '8.0.0' });
+    expect(readFileSync(join(outDir, '.bazelversion'), 'utf8').trim()).toBe('8.0.0');
+    expect(readFileSync(join(outDir, '.xcodebazelmcp', 'config.yaml'), 'utf8')).toContain(`workspacePath: ${outDir}`);
+  });
+
+  it('iOS Info.plist includes LSRequiresIPhoneOS / UILaunchScreen; macOS does not', () => {
+    const iosDir = join(testDir, 'ios-plist');
+    scaffold({ outputPath: iosDir, name: 'IApp', template: 'ios_app' });
+    const iosPlist = readFileSync(join(iosDir, 'IApp', 'Info.plist'), 'utf8');
+    expect(iosPlist).toContain('LSRequiresIPhoneOS');
+    expect(iosPlist).toContain('UILaunchScreen');
+
+    const macDir = join(testDir, 'mac-plist');
+    scaffold({ outputPath: macDir, name: 'MApp', template: 'macos_app' });
+    const macPlist = readFileSync(join(macDir, 'MApp', 'Info.plist'), 'utf8');
+    expect(macPlist).not.toContain('LSRequiresIPhoneOS');
+  });
+
+  it('rejects an injection-prone bundleId', () => {
+    const outDir = join(testDir, 'bad-bundle');
+    expect(() =>
+      scaffold({ outputPath: outDir, name: 'App', template: 'ios_app', bundleId: 'com.x"\n evil' }),
+    ).toThrow('Invalid bundleId');
+    expect(existsSync(join(outDir, 'MODULE.bazel'))).toBe(false);
+  });
+
+  it('rejects a non-numeric minimumOs', () => {
+    const outDir = join(testDir, 'bad-os');
+    expect(() =>
+      scaffold({ outputPath: outDir, name: 'App', template: 'ios_app', minimumOs: 'latest' }),
+    ).toThrow('Invalid minimumOs');
+  });
+
+  it('honors a custom families list and rejects invalid families', () => {
+    const outDir = join(testDir, 'families');
+    scaffold({ outputPath: outDir, name: 'IPhoneOnly', template: 'ios_app', families: ['iphone'] });
+    const build = readFileSync(join(outDir, 'IPhoneOnly', 'BUILD.bazel'), 'utf8');
+    expect(build).toContain('families = ["iphone"]');
+
+    expect(() =>
+      scaffold({ outputPath: join(testDir, 'bad-fam'), name: 'X', template: 'ios_app', families: ['tv'] }),
+    ).toThrow('Invalid family');
+  });
+
+  it('rejects a malformed rulesVersion', () => {
+    const outDir = join(testDir, 'bad-rules');
+    expect(() =>
+      scaffold({ outputPath: outDir, name: 'App', template: 'ios_app', rulesVersion: 'HEAD' }),
+    ).toThrow('Invalid rulesVersion');
+  });
 });

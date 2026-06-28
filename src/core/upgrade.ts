@@ -20,6 +20,11 @@ export function detectInstallMethod(): InstallMethod {
   if (selfPath.includes('/Cellar/') || selfPath.includes('/homebrew/')) return 'homebrew';
   if (selfPath.includes('/node_modules/.bin/')) return 'npm-local';
   if (selfPath.includes('/lib/node_modules/') || selfPath.includes('/npm/') || selfPath.includes('/pnpm/')) return 'npm-global';
+  // Node version managers (volta/asdf/fnm/nvm/n) install global packages under
+  // their own trees; a self path inside node_modules there is a global install.
+  if (/\/\.(volta|asdf|fnm|nvm)\/|\/n\/versions\//.test(selfPath) && selfPath.includes('/node_modules/')) {
+    return 'npm-global';
+  }
 
   const pkgJson = findPackageJson(selfPath);
   if (pkgJson) return 'source';
@@ -92,7 +97,7 @@ export async function performUpgrade(method?: InstallMethod): Promise<CommandRes
       const selfPath = getSelfPath();
       const pkgJsonPath = findPackageJson(selfPath || process.cwd());
       const repoRoot = pkgJsonPath ? dirname(pkgJsonPath) : process.cwd();
-      const pullResult = await runCommand('git', ['pull', '--rebase'], {
+      const pullResult = await runCommand('git', ['pull', '--rebase', '--autostash'], {
         cwd: repoRoot,
         timeoutSeconds: 60,
         maxOutput: 100_000,
@@ -132,14 +137,50 @@ export function upgradeHint(method: InstallMethod): string {
   }
 }
 
+function splitVersion(v: string): { core: number[]; pre: string[] } {
+  const noBuild = v.split('+')[0];
+  const dash = noBuild.indexOf('-');
+  const coreStr = dash === -1 ? noBuild : noBuild.slice(0, dash);
+  const preStr = dash === -1 ? '' : noBuild.slice(dash + 1);
+  const core = coreStr.split('.').map((s) => parseInt(s, 10) || 0);
+  return { core, pre: preStr ? preStr.split('.') : [] };
+}
+
+/**
+ * SemVer-ish comparison. Compares the numeric release core, then applies the
+ * SemVer rule that a version with a prerelease tag has lower precedence than the
+ * same version without one (e.g. 2.5.0-beta.1 < 2.5.0).
+ */
 export function compareVersions(a: string, b: string): number {
-  const pa = a.split('.').map(Number);
-  const pb = b.split('.').map(Number);
-  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-    const na = pa[i] || 0;
-    const nb = pb[i] || 0;
+  const va = splitVersion(a);
+  const vb = splitVersion(b);
+  const len = Math.max(va.core.length, vb.core.length);
+  for (let i = 0; i < len; i++) {
+    const na = va.core[i] || 0;
+    const nb = vb.core[i] || 0;
     if (na > nb) return 1;
     if (na < nb) return -1;
+  }
+  if (va.pre.length === 0 && vb.pre.length === 0) return 0;
+  if (va.pre.length === 0) return 1;
+  if (vb.pre.length === 0) return -1;
+  const plen = Math.max(va.pre.length, vb.pre.length);
+  for (let i = 0; i < plen; i++) {
+    const ida = va.pre[i];
+    const idb = vb.pre[i];
+    if (ida === undefined) return -1;
+    if (idb === undefined) return 1;
+    const na = /^\d+$/.test(ida) ? Number(ida) : null;
+    const nb = /^\d+$/.test(idb) ? Number(idb) : null;
+    if (na !== null && nb !== null) {
+      if (na !== nb) return na > nb ? 1 : -1;
+    } else if (na !== null) {
+      return -1;
+    } else if (nb !== null) {
+      return 1;
+    } else if (ida !== idb) {
+      return ida > idb ? 1 : -1;
+    }
   }
   return 0;
 }

@@ -4,6 +4,13 @@ function append(value: unknown, next: string): string[] {
   return [...(Array.isArray(value) ? (value as string[]) : []), next];
 }
 
+function appendEnv(existing: unknown, pair: string | undefined): Record<string, string> {
+  const env = (existing as Record<string, string>) ?? {};
+  const eq = pair?.indexOf('=') ?? -1;
+  if (pair && eq > 0) env[pair.slice(0, eq)] = pair.slice(eq + 1);
+  return env;
+}
+
 export function parseDiscover(args: string[]): JsonObject {
   const parsed: JsonObject = {};
   for (let index = 0; index < args.length; index += 1) {
@@ -164,7 +171,9 @@ export function parseLaunch(args: string[]): JsonObject {
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === '--simulator-id') parsed.simulatorId = args[++index];
+    else if (arg === '--simulator-name') parsed.simulatorName = args[++index];
     else if (arg === '--launch-arg') parsed.launchArgs = append(parsed.launchArgs, args[++index]);
+    else if (arg === '--launch-env') parsed.launchEnv = appendEnv(parsed.launchEnv, args[++index]);
   }
   return parsed;
 }
@@ -306,6 +315,7 @@ export function parseStatusBar(args: string[]): JsonObject {
     else if (arg === '--battery-level') parsed.batteryLevel = Number(args[++index]);
     else if (arg === '--battery-state') parsed.batteryState = args[++index];
     else if (arg === '--network') parsed.networkType = args[++index];
+    else if (arg === '--operator') parsed.operatorName = args[++index];
     else if (arg === '--wifi-bars') parsed.wifiBars = Number(args[++index]);
     else if (arg === '--cellular-bars') parsed.cellularBars = Number(args[++index]);
     else if (arg === '--clear') parsed.clear = true;
@@ -384,6 +394,8 @@ export function parseScaffold(args: string[]): JsonObject {
     else if (arg === '--bundle-id') parsed.bundleId = args[++index];
     else if (arg === '--minimum-os') parsed.minimumOs = args[++index];
     else if (arg === '--rules-version') parsed.rulesVersion = args[++index];
+    else if (arg === '--bazel-version') parsed.bazelVersion = args[++index];
+    else if (arg === '--family') parsed.families = append(parsed.families, args[++index]);
   }
   if (!parsed.outputPath && parsed.name) {
     parsed.outputPath = parsed.name;
@@ -406,8 +418,8 @@ export function parseSpmBuild(args: string[]): JsonObject {
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === '--path' || arg === '--package-path') parsed.packagePath = args[++index];
-    else if (arg === '--release' || arg === '-c' && args[index + 1] === 'release') { parsed.configuration = 'release'; if (arg === '-c') index++; }
-    else if (arg === '--debug') parsed.configuration = 'debug';
+    else if (arg === '--release' || (arg === '-c' && args[index + 1] === 'release')) { parsed.configuration = 'release'; if (arg === '-c') index++; }
+    else if (arg === '--debug' || (arg === '-c' && args[index + 1] === 'debug')) { parsed.configuration = 'debug'; if (arg === '-c') index++; }
     else if (arg === '--target') parsed.target = args[++index];
     else if (arg === '--arg') parsed.extraArgs = append(parsed.extraArgs, args[++index]);
     else if (arg === '--stream') parsed.streaming = true;
@@ -421,7 +433,8 @@ export function parseSpmTest(args: string[]): JsonObject {
     const arg = args[index];
     if (arg === '--path' || arg === '--package-path') parsed.packagePath = args[++index];
     else if (arg === '--filter') parsed.filter = args[++index];
-    else if (arg === '--release') parsed.configuration = 'release';
+    else if (arg === '--release' || (arg === '-c' && args[index + 1] === 'release')) { parsed.configuration = 'release'; if (arg === '-c') index++; }
+    else if (arg === '--debug' || (arg === '-c' && args[index + 1] === 'debug')) { parsed.configuration = 'debug'; if (arg === '-c') index++; }
     else if (arg === '--arg') parsed.extraArgs = append(parsed.extraArgs, args[++index]);
     else if (arg === '--stream') parsed.streaming = true;
   }
@@ -430,14 +443,16 @@ export function parseSpmTest(args: string[]): JsonObject {
 
 export function parseSpmRun(args: string[]): JsonObject {
   const parsed: JsonObject = {};
-  const positional = args.find((arg) => !arg.startsWith('--'));
-  if (positional) parsed.executable = positional;
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === '--path' || arg === '--package-path') parsed.packagePath = args[++index];
-    else if (arg === '--release') parsed.configuration = 'release';
+    else if (arg === '--release' || (arg === '-c' && args[index + 1] === 'release')) { parsed.configuration = 'release'; if (arg === '-c') index++; }
+    else if (arg === '--debug' || (arg === '-c' && args[index + 1] === 'debug')) { parsed.configuration = 'debug'; if (arg === '-c') index++; }
     else if (arg === '--arg') parsed.extraArgs = append(parsed.extraArgs, args[++index]);
     else if (arg === '--run-arg') parsed.runArgs = append(parsed.runArgs, args[++index]);
+    else if (arg === '--stream') parsed.streaming = true;
+    // First bare token (not a flag, not a flag value consumed above) is the executable.
+    else if (!arg.startsWith('-') && parsed.executable === undefined) parsed.executable = arg;
   }
   return parsed;
 }
@@ -611,6 +626,7 @@ export function parseDeviceBuildAndRun(args: string[]): JsonObject {
     else if (arg === '--arg') parsed.extraArgs = append(parsed.extraArgs, args[++index]);
     else if (arg === '--startup-arg') parsed.startupArgs = append(parsed.startupArgs, args[++index]);
     else if (arg === '--launch-arg') parsed.launchArgs = append(parsed.launchArgs, args[++index]);
+    else if (arg === '--launch-env') parsed.launchEnv = appendEnv(parsed.launchEnv, args[++index]);
     else if (arg === '--stream') parsed.streaming = true;
   }
   return parsed;
@@ -637,6 +653,7 @@ export function parseDeviceLaunch(args: string[]): JsonObject {
     if (arg === '--device-id') parsed.deviceId = args[++index];
     else if (arg === '--device-name') parsed.deviceName = args[++index];
     else if (arg === '--launch-arg') parsed.launchArgs = append(parsed.launchArgs, args[++index]);
+    else if (arg === '--launch-env') parsed.launchEnv = appendEnv(parsed.launchEnv, args[++index]);
   }
   return parsed;
 }

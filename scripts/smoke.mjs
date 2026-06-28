@@ -1,4 +1,6 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
 const root = resolve(new URL('..', import.meta.url).pathname);
@@ -29,6 +31,30 @@ for (const toolName of ['bazel_ios_build', 'bazel_ios_test', 'bazel_ios_discover
   if (!allHandlerContent.includes(toolName)) {
     throw new Error(`Missing tool: ${toolName}`);
   }
+}
+
+// Runtime smoke: boot the CLI (no Bazel/Xcode needed) and exercise scaffolding.
+const cli = join(root, 'src/cli.ts');
+const runCli = (args) =>
+  execFileSync('npx', ['tsx', cli, ...args], { cwd: root, encoding: 'utf8', timeout: 60_000 });
+
+const toolsOut = runCli(['tools']);
+const toolCount = toolsOut.split('\n').filter((l) => /^[a-z_]+$/.test(l)).length;
+if (toolCount !== 125) {
+  throw new Error(`Expected 125 tools, CLI listed ${toolCount}`);
+}
+for (const t of ['bazel_ios_uninstall_app', 'bazel_ios_device_uninstall_app', 'bazel_ios_device_list_apps']) {
+  if (!toolsOut.includes(t)) throw new Error(`tools output missing ${t}`);
+}
+
+const scaffoldDir = mkdtempSync(join(tmpdir(), 'xbmcp-smoke-'));
+try {
+  runCli(['new', 'ios_app', 'SmokeApp', '-o', scaffoldDir]);
+  for (const f of ['MODULE.bazel', '.bazelrc', 'SmokeApp/BUILD.bazel', 'SmokeApp/Info.plist']) {
+    if (!existsSync(join(scaffoldDir, f))) throw new Error(`scaffold missing ${f}`);
+  }
+} finally {
+  rmSync(scaffoldDir, { recursive: true, force: true });
 }
 
 console.log('smoke ok');

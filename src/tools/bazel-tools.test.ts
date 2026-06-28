@@ -40,12 +40,15 @@ describe('Bazel MCP tool definitions', () => {
       'bazel_ios_last_command',
       'bazel_ios_bsp_status',
       'bazel_ios_stop_app',
+      'bazel_ios_uninstall_app',
       'bazel_ios_get_app_path',
       'bazel_ios_get_bundle_id',
       'bazel_ios_screenshot',
       'bazel_ios_video_record_start',
       'bazel_ios_video_record_stop',
       'bazel_ios_set_status_bar',
+      'bazel_ios_add_media',
+      'bazel_ios_get_app_container',
       'bazel_ios_privacy',
       'bazel_ios_push_notification',
       'bazel_ios_open_url',
@@ -56,6 +59,8 @@ describe('Bazel MCP tool definitions', () => {
       'bazel_ios_device_install_app',
       'bazel_ios_device_launch_app',
       'bazel_ios_device_stop_app',
+      'bazel_ios_device_uninstall_app',
+      'bazel_ios_device_list_apps',
       'bazel_ios_device_test',
       'bazel_ios_device_screenshot',
       'bazel_ios_device_log_start',
@@ -124,10 +129,13 @@ describe('Bazel MCP tool definitions', () => {
       'bazel_ios_key_press',
       'bazel_ios_drag',
       'bazel_ios_accessibility_snapshot',
+      'bazel_xcode_native_mcp_status',
+      'bazel_xcode_open_device_hub',
+      'bazel_xcode_export_skills',
     ];
     expect([...names].sort()).toEqual([...expected].sort());
     expect(new Set(names).size).toBe(names.length);
-    expect(bazelToolDefinitions.length).toBe(117);
+    expect(bazelToolDefinitions.length).toBe(125);
   });
 
   it('advertises startupArgs on every Bazel command tool that can need startup flags', () => {

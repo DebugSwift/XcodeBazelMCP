@@ -1,5 +1,5 @@
 import type { JsonObject, ToolCallResult, ToolDefinition } from '../../types/index.js';
-import { resolveSimulatorFromArgs, prependWarning, numberOrUndefined } from '../helpers.js';
+import { resolveSimulatorFromArgs, prependWarning, numberOrUndefined, requireFiniteNumber } from '../helpers.js';
 import {
   simulatorTap, simulatorDoubleTap, simulatorLongPress,
   simulatorSwipe, simulatorPinch, simulatorTypeText,
@@ -71,7 +71,7 @@ export const definitions: ToolDefinition[] = [
   },
   {
     name: 'bazel_ios_pinch',
-    description: 'Simulate a pinch (zoom) gesture on the simulator.',
+    description: 'Simulate a pinch (zoom) gesture on the simulator. Requires idb for true multi-touch; without idb the CGEvent fallback only approximates with a tap.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -100,11 +100,11 @@ export const definitions: ToolDefinition[] = [
   },
   {
     name: 'bazel_ios_key_press',
-    description: 'Send a key press event to the simulator (e.g. Return, Escape, Home).',
+    description: 'Send a key press event to the simulator (e.g. Return, Escape, Tab, Space, Delete, arrows, Home).',
     inputSchema: {
       type: 'object',
       properties: {
-        key: { type: 'string', description: 'Key name (e.g. Return, Escape, Home, VolumeUp, VolumeDown, Lock).' },
+        key: { type: 'string', description: 'Key name: Return, Escape, Tab, Space, Delete, Up, Down, Left, Right, or Home. Other values are typed as literal text.' },
         simulatorId: { type: 'string', description: 'Simulator UDID.' },
         simulatorName: { type: 'string', description: 'Simulator name.' },
       },
@@ -150,21 +150,27 @@ export function canHandle(name: string): boolean {
 export async function handle(name: string, args: JsonObject): Promise<ToolCallResult | undefined> {
   switch (name) {
     case 'bazel_ios_tap': {
+      const x = requireFiniteNumber(args.x, 'x');
+      const y = requireFiniteNumber(args.y, 'y');
       const { sim, warning: simWarning } = await resolveSimulatorFromArgs(args);
-      const result = await simulatorTap({ simulatorUdid: sim.udid, x: args.x as number, y: args.y as number });
+      const result = await simulatorTap({ simulatorUdid: sim.udid, x, y });
       const msg = result.exitCode === 0 ? `Tapped at (${args.x}, ${args.y}) on ${sim.name}.` : formatCommandResult(result);
       return toolText(prependWarning(msg, simWarning), result.exitCode !== 0);
     }
     case 'bazel_ios_double_tap': {
+      const x = requireFiniteNumber(args.x, 'x');
+      const y = requireFiniteNumber(args.y, 'y');
       const { sim, warning: simWarning } = await resolveSimulatorFromArgs(args);
-      const result = await simulatorDoubleTap({ simulatorUdid: sim.udid, x: args.x as number, y: args.y as number });
+      const result = await simulatorDoubleTap({ simulatorUdid: sim.udid, x, y });
       const msg = result.exitCode === 0 ? `Double-tapped at (${args.x}, ${args.y}) on ${sim.name}.` : formatCommandResult(result);
       return toolText(prependWarning(msg, simWarning), result.exitCode !== 0);
     }
     case 'bazel_ios_long_press': {
+      const x = requireFiniteNumber(args.x, 'x');
+      const y = requireFiniteNumber(args.y, 'y');
       const { sim, warning: simWarning } = await resolveSimulatorFromArgs(args);
       const duration = numberOrUndefined(args.durationSeconds);
-      const result = await simulatorLongPress({ simulatorUdid: sim.udid, x: args.x as number, y: args.y as number, durationSeconds: duration });
+      const result = await simulatorLongPress({ simulatorUdid: sim.udid, x, y, durationSeconds: duration });
       const msg = result.exitCode === 0 ? `Long-pressed at (${args.x}, ${args.y}) for ${duration ?? 1.0}s on ${sim.name}.` : formatCommandResult(result);
       return toolText(prependWarning(msg, simWarning), result.exitCode !== 0);
     }
@@ -183,15 +189,18 @@ export async function handle(name: string, args: JsonObject): Promise<ToolCallRe
       return toolText(prependWarning(msg, simWarning), result.exitCode !== 0);
     }
     case 'bazel_ios_pinch': {
+      const x = requireFiniteNumber(args.x, 'x');
+      const y = requireFiniteNumber(args.y, 'y');
+      const scale = requireFiniteNumber(args.scale, 'scale');
       const { sim, warning: simWarning } = await resolveSimulatorFromArgs(args);
       const result = await simulatorPinch({
         simulatorUdid: sim.udid,
-        x: args.x as number,
-        y: args.y as number,
-        scale: args.scale as number,
+        x,
+        y,
+        scale,
         velocity: numberOrUndefined(args.velocity),
       });
-      const label = (args.scale as number) > 1 ? 'zoom in' : 'zoom out';
+      const label = scale > 1 ? 'zoom in' : 'zoom out';
       const msg = result.exitCode === 0 ? `Pinch ${label} (scale=${args.scale}) at (${args.x}, ${args.y}) on ${sim.name}.` : formatCommandResult(result);
       return toolText(prependWarning(msg, simWarning), result.exitCode !== 0);
     }
@@ -208,13 +217,17 @@ export async function handle(name: string, args: JsonObject): Promise<ToolCallRe
       return toolText(prependWarning(msg, simWarning), result.exitCode !== 0);
     }
     case 'bazel_ios_drag': {
+      const fromX = requireFiniteNumber(args.fromX, 'fromX');
+      const fromY = requireFiniteNumber(args.fromY, 'fromY');
+      const toX = requireFiniteNumber(args.toX, 'toX');
+      const toY = requireFiniteNumber(args.toY, 'toY');
       const { sim, warning: simWarning } = await resolveSimulatorFromArgs(args);
       const result = await simulatorDrag({
         simulatorUdid: sim.udid,
-        fromX: args.fromX as number,
-        fromY: args.fromY as number,
-        toX: args.toX as number,
-        toY: args.toY as number,
+        fromX,
+        fromY,
+        toX,
+        toY,
         durationSeconds: numberOrUndefined(args.durationSeconds),
       });
       const msg = result.exitCode === 0 ? `Dragged from (${args.fromX}, ${args.fromY}) to (${args.toX}, ${args.toY}) on ${sim.name}.` : formatCommandResult(result);

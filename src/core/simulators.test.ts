@@ -4,6 +4,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import type { CommandResult } from '../types/index.js';
 import { runCommand } from '../utils/process.js';
 import {
+  assertLogFilter,
+  buildLogPredicate,
   bootSimulator,
   bootSimulatorIfNeeded,
   clearStatusBar,
@@ -17,7 +19,9 @@ import {
   openSimulatorApp,
   openUrl,
   readBundleId,
+  readInfoPlistValue,
   resolveSimulator,
+  runtimeVersion,
   sendPushNotification,
   setPrivacy,
   setSimulatorAppearance,
@@ -67,6 +71,22 @@ beforeAll(() => {
 </plist>`,
   );
 
+  // macOS layout: Info.plist lives under Contents/
+  mkdirSync(join(bazelBin, 'mac', 'MacApp.app', 'Contents'), { recursive: true });
+  writeFileSync(
+    join(bazelBin, 'mac', 'MacApp.app', 'Contents', 'Info.plist'),
+    `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleIdentifier</key>
+  <string>com.example.MacApp</string>
+  <key>CFBundleExecutable</key>
+  <string>MacApp</string>
+</dict>
+</plist>`,
+  );
+
   mkdirSync(join(bazelBin, 'app', 'app_archive-root', 'Payload', 'SwiftUIApp.app'), { recursive: true });
   writeFileSync(
     join(bazelBin, 'app', 'app_archive-root', 'Payload', 'SwiftUIApp.app', 'Info.plist'),
@@ -99,6 +119,34 @@ const mockSuccess: CommandResult = {
   durationMs: 10,
   truncated: false,
 };
+
+describe('assertLogFilter / buildLogPredicate', () => {
+  it('accepts dotted identifiers', () => {
+    expect(assertLogFilter('com.example.MyApp', 'subsystem')).toBe('com.example.MyApp');
+    expect(assertLogFilter('MyApp', 'processName')).toBe('MyApp');
+  });
+
+  it('rejects values with quotes, spaces, or predicate operators (security)', () => {
+    expect(() => assertLogFilter('com.x" OR 1==1', 'subsystem')).toThrow('Invalid subsystem');
+    expect(() => assertLogFilter('My App', 'processName')).toThrow('Invalid processName');
+    expect(() => assertLogFilter('*', 'subsystem')).toThrow('Invalid subsystem');
+    expect(() => assertLogFilter('', 'processName')).toThrow('Invalid processName');
+  });
+
+  it('builds an AND predicate from both filters', () => {
+    expect(buildLogPredicate({ processName: 'MyApp', subsystem: 'com.example.MyApp' })).toBe(
+      'process == "MyApp" AND subsystem == "com.example.MyApp"',
+    );
+  });
+
+  it('returns undefined with no filters', () => {
+    expect(buildLogPredicate({})).toBeUndefined();
+  });
+
+  it('rejects an injection attempt in buildLogPredicate', () => {
+    expect(() => buildLogPredicate({ subsystem: 'a" OR process == "b' })).toThrow('Invalid subsystem');
+  });
+});
 
 describe('findAppBundle', () => {
   it('finds an app at the root of bazel-bin for //:Target', () => {
@@ -143,8 +191,28 @@ describe('readBundleId', () => {
     expect(readBundleId(appPath)).toBe('com.example.MyApp');
   });
 
+  it('reads CFBundleIdentifier from a macOS Contents/Info.plist layout (regression)', () => {
+    const appPath = join(bazelBin, 'mac', 'MacApp.app');
+    expect(readBundleId(appPath)).toBe('com.example.MacApp');
+  });
+
+  it('reads arbitrary Info.plist keys via readInfoPlistValue', () => {
+    const appPath = join(bazelBin, 'mac', 'MacApp.app');
+    expect(readInfoPlistValue(appPath, 'CFBundleExecutable')).toBe('MacApp');
+    expect(readInfoPlistValue(appPath, 'NoSuchKey')).toBeUndefined();
+  });
+
   it('throws when Info.plist is missing', () => {
     expect(() => readBundleId('/tmp/no-such-app.app')).toThrow('Info.plist not found');
+  });
+});
+
+describe('runtimeVersion', () => {
+  it('parses iOS runtime ids into comparable numbers', () => {
+    expect(runtimeVersion('com.apple.CoreSimulator.SimRuntime.iOS-26-3')).toBeGreaterThan(
+      runtimeVersion('com.apple.CoreSimulator.SimRuntime.iOS-17-5'),
+    );
+    expect(runtimeVersion('garbage')).toBe(0);
   });
 });
 
@@ -186,6 +254,22 @@ describe('listSimulators', () => {
 
     expect(result.devices).toHaveLength(1);
     expect(result.devices[0].name).toBe('iPhone 15');
+  });
+
+  it('prefers stdout over combined output so stderr noise cannot break parsing (regression)', async () => {
+    const jsonOutput = JSON.stringify({
+      devices: { 'iOS 17.0': [{ name: 'iPhone 15', udid: 'ABC-123', state: 'Booted', isAvailable: true }] },
+    });
+    mockRunCommand.mockResolvedValue({
+      ...mockSuccess,
+      stdout: jsonOutput,
+      output: `WARNING: deprecated runtime\n${jsonOutput}`,
+    });
+
+    const result = await listSimulators();
+
+    expect(result.devices).toHaveLength(1);
+    expect(result.devices[0].udid).toBe('ABC-123');
   });
 
   it('returns empty array on parse error', async () => {
@@ -253,6 +337,24 @@ describe('resolveSimulator', () => {
     });
     const result = await resolveSimulator({});
     expect(result.device.name).toBe('iPhone 14');
+  });
+
+  it('prefers the iPhone on the newest runtime when none booted', async () => {
+    mockRunCommand.mockResolvedValue({
+      ...mockSuccess,
+      output: JSON.stringify({
+        devices: {
+          'com.apple.CoreSimulator.SimRuntime.iOS-17-0': [
+            { name: 'iPhone 15', udid: 'OLD', state: 'Shutdown', isAvailable: true },
+          ],
+          'com.apple.CoreSimulator.SimRuntime.iOS-26-3': [
+            { name: 'iPhone 16', udid: 'NEW', state: 'Shutdown', isAvailable: true },
+          ],
+        },
+      }),
+    });
+    const result = await resolveSimulator({});
+    expect(result.device.udid).toBe('NEW');
   });
 
   it('returns first available device when no iPhones', async () => {

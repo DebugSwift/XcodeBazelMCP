@@ -12,6 +12,34 @@ export interface SimulatorDevice {
   isAvailable: boolean;
 }
 
+/**
+ * Allowlist for os_log predicate filter values (process name / subsystem).
+ * Prevents a crafted value from breaking out of the quoted predicate and
+ * broadening the log stream to other apps or Apple system subsystems.
+ */
+const LOG_FILTER_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+export function assertLogFilter(value: string, name: string): string {
+  if (!LOG_FILTER_RE.test(value)) {
+    throw new Error(
+      `Invalid ${name} "${value}". Use letters, numbers, dots, dashes, and underscores only (e.g. com.example.MyApp).`,
+    );
+  }
+  return value;
+}
+
+/**
+ * Build a safe `log stream --predicate` value from optional process/subsystem
+ * filters. Filters are validated against an allowlist and combined with AND so
+ * they narrow (intersect) the stream rather than broaden it.
+ */
+export function buildLogPredicate(opts: { processName?: string; subsystem?: string }): string | undefined {
+  const predicates: string[] = [];
+  if (opts.processName) predicates.push(`process == "${assertLogFilter(opts.processName, 'processName')}"`);
+  if (opts.subsystem) predicates.push(`subsystem == "${assertLogFilter(opts.subsystem, 'subsystem')}"`);
+  return predicates.length > 0 ? predicates.join(' AND ') : undefined;
+}
+
 export async function listSimulators(onlyBooted = false): Promise<{
   command: CommandResult;
   devices: SimulatorDevice[];
@@ -28,7 +56,9 @@ export async function listSimulators(onlyBooted = false): Promise<{
 
   let parsed: { devices?: Record<string, Array<Omit<SimulatorDevice, 'runtime'>>> };
   try {
-    parsed = JSON.parse(command.output);
+    // simctl writes JSON to stdout; prefer it so stderr warnings (e.g. runtime
+    // deprecation notices merged into `output`) can't break JSON.parse.
+    parsed = JSON.parse(command.stdout || command.output);
   } catch {
     return { command, devices: [] };
   }
@@ -50,6 +80,17 @@ export async function listSimulators(onlyBooted = false): Promise<{
 interface ResolvedSimulator {
   device: SimulatorDevice;
   warning?: string;
+}
+
+/**
+ * Turn a runtime id like `com.apple.CoreSimulator.SimRuntime.iOS-26-3` into a
+ * comparable number (26.3 → 26003) so the newest runtime sorts highest.
+ */
+export function runtimeVersion(runtime: string): number {
+  const match = runtime.match(/(\d+)-(\d+)(?:-(\d+))?$/);
+  if (!match) return 0;
+  const [, major, minor, patch] = match;
+  return Number(major) * 1_000_000 + Number(minor) * 1_000 + Number(patch || 0);
 }
 
 export async function resolveSimulator(options: {
@@ -86,8 +127,13 @@ export async function resolveSimulator(options: {
 
   if (bootedDevices.length === 1) return { device: bootedDevices[0] };
 
-  const iphone = devices.find((d) => d.name.startsWith('iPhone') && d.isAvailable);
-  if (iphone) return { device: iphone };
+  // No booted sim: pick a deterministic, sensible default — the available
+  // iPhone on the newest runtime (rather than whatever simctl happens to list
+  // first, which is often an old model).
+  const iphones = devices
+    .filter((d) => d.name.startsWith('iPhone') && d.isAvailable)
+    .sort((a, b) => runtimeVersion(b.runtime) - runtimeVersion(a.runtime) || a.name.localeCompare(b.name));
+  if (iphones.length > 0) return { device: iphones[0] };
 
   if (devices.length > 0) return { device: devices[0] };
 
@@ -119,6 +165,17 @@ export async function installApp(
   });
 }
 
+export async function uninstallApp(
+  simulatorUdid: string,
+  bundleId: string,
+): Promise<CommandResult> {
+  return runCommand('xcrun', ['simctl', 'uninstall', simulatorUdid, bundleId], {
+    cwd: process.cwd(),
+    timeoutSeconds: 30,
+    maxOutput: 50_000,
+  });
+}
+
 export async function launchApp(
   simulatorUdid: string,
   bundleId: string,
@@ -140,31 +197,45 @@ export async function launchApp(
   });
 }
 
-export function readBundleId(appPath: string): string {
-  const plistPath = join(appPath, 'Info.plist');
-  if (!existsSync(plistPath)) {
+/**
+ * Locate the Info.plist for an .app bundle, handling both the iOS layout
+ * (`<app>/Info.plist`) and the macOS layout (`<app>/Contents/Info.plist`).
+ */
+export function findInfoPlist(appPath: string): string | null {
+  const iosPlist = join(appPath, 'Info.plist');
+  if (existsSync(iosPlist)) return iosPlist;
+  const macPlist = join(appPath, 'Contents', 'Info.plist');
+  if (existsSync(macPlist)) return macPlist;
+  return null;
+}
+
+/** Read a single string value out of an .app bundle's Info.plist. */
+export function readInfoPlistValue(appPath: string, key: string): string | undefined {
+  const plistPath = findInfoPlist(appPath);
+  if (!plistPath) {
     throw new Error(`Info.plist not found in ${appPath}`);
   }
-
   const result = spawnSync('plutil', ['-convert', 'json', '-o', '-', plistPath], {
     encoding: 'utf-8',
     timeout: 5_000,
   });
-
   if (result.error) {
     throw result.error;
   }
-
   if (result.status !== 0) {
     throw new Error(`plutil failed with exit code ${result.status}: ${result.stderr}`);
   }
+  const parsed = JSON.parse(result.stdout) as Record<string, unknown>;
+  const value = parsed[key];
+  return typeof value === 'string' ? value : undefined;
+}
 
-  const parsed = JSON.parse(result.stdout) as { CFBundleIdentifier?: string };
-
-  if (!parsed.CFBundleIdentifier) {
-    throw new Error(`CFBundleIdentifier not found in ${plistPath}`);
+export function readBundleId(appPath: string): string {
+  const bundleId = readInfoPlistValue(appPath, 'CFBundleIdentifier');
+  if (!bundleId) {
+    throw new Error(`CFBundleIdentifier not found in ${appPath}`);
   }
-  return parsed.CFBundleIdentifier;
+  return bundleId;
 }
 
 export async function bootSimulator(udid: string): Promise<CommandResult> {
@@ -333,6 +404,29 @@ export async function openUrl(
   });
 }
 
+export async function addMedia(
+  simulatorUdid: string,
+  paths: string[],
+): Promise<CommandResult> {
+  return runCommand('xcrun', ['simctl', 'addmedia', simulatorUdid, ...paths], {
+    cwd: process.cwd(),
+    timeoutSeconds: 60,
+    maxOutput: 50_000,
+  });
+}
+
+export async function getAppContainer(
+  simulatorUdid: string,
+  bundleId: string,
+  kind: 'app' | 'data' | 'groups' = 'data',
+): Promise<CommandResult> {
+  return runCommand('xcrun', ['simctl', 'get_app_container', simulatorUdid, bundleId, kind], {
+    cwd: process.cwd(),
+    timeoutSeconds: 15,
+    maxOutput: 50_000,
+  });
+}
+
 export async function getSimulatorUiState(
   simulatorUdid: string,
 ): Promise<{ appearance: CommandResult; increaseContrast: CommandResult }> {
@@ -390,7 +484,7 @@ function findFirstApp(dir: string): string | null {
   return null;
 }
 
-function searchForApp(dir: string, targetName: string): string | null {
+function searchForApp(dir: string, targetName: string, depth = 8): string | null {
   const appName = `${targetName}.app`;
 
   try {
@@ -400,9 +494,10 @@ function searchForApp(dir: string, targetName: string): string | null {
         return join(dir, entry.name);
       }
     }
+    if (depth <= 0) return null; // bound recursion on deep bazel-bin trees
     for (const entry of entries) {
       if (entry.isDirectory() && !entry.name.startsWith('.')) {
-        const found = searchForApp(join(dir, entry.name), targetName);
+        const found = searchForApp(join(dir, entry.name), targetName, depth - 1);
         if (found) return found;
       }
     }

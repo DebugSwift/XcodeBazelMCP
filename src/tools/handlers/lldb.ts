@@ -158,8 +158,15 @@ export function canHandle(name: string): boolean {
 export async function handle(name: string, args: JsonObject): Promise<ToolCallResult | undefined> {
   switch (name) {
     case 'bazel_ios_lldb_attach': {
-      if (typeof args.pid !== 'number' && typeof args.processName !== 'string') {
+      const hasPid = typeof args.pid === 'number';
+      if (!hasPid && typeof args.processName !== 'string') {
         throw new Error('Either pid or processName is required.');
+      }
+      if (hasPid && !Number.isFinite(args.pid as number)) {
+        throw new Error('pid must be a finite number.');
+      }
+      if (hasPid && args.waitFor === true) {
+        throw new Error('waitFor cannot be combined with pid; it only applies when attaching by processName.');
       }
       const target = (args.target as 'simulator' | 'device') || 'simulator';
 

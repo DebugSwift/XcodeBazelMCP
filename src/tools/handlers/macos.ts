@@ -1,8 +1,9 @@
+import { join } from 'node:path';
 import type { JsonObject, ToolCallResult, ToolDefinition, BuildArgs, TestArgs, TargetKind, BuildMode } from '../../types/index.js';
 import { stringOrUndefined, numberOrUndefined } from '../helpers.js';
 import { STREAMING_PROPERTY } from '../schema-constants.js';
-import { buildCommandArgs, configArgs, discoverExpression, modeArgs, requireLabel, runBazel, asStringArray, testFilterArgs } from '../../core/bazel.js';
-import { findAppBundle, readBundleId } from '../../core/simulators.js';
+import { buildCommandArgs, configArgs, discoverExpression, modeArgs, parseTargetLabels, requireLabel, runBazel, asStringArray, testFilterArgs } from '../../core/bazel.js';
+import { findAppBundle, readBundleId, readInfoPlistValue } from '../../core/simulators.js';
 import { formatCommandResult, structuredCommandResult, toolResult, toolText } from '../../utils/output.js';
 import { runCommand } from '../../utils/process.js';
 import { getConfig } from '../../runtime/config.js';
@@ -207,6 +208,9 @@ export async function handle(name: string, args: JsonObject): Promise<ToolCallRe
     }
     case 'bazel_macos_run': {
       const target = requireLabel(args.target);
+      // No platformArgs here on purpose: `bazel run` builds for the host
+      // (darwin) by default, so adding --platforms is unnecessary (unlike the
+      // tvOS/watchOS/visionOS run handlers which target a non-host platform).
       const bazelArgs = [
         'run',
         ...modeArgs(args.buildMode as BuildMode | undefined),
@@ -255,16 +259,24 @@ export async function handle(name: string, args: JsonObject): Promise<ToolCallRe
       const kind = (args.kind as TargetKind | undefined) || 'macos_all';
       const expression = discoverExpression(kind, stringOrUndefined(args.scope));
       const commandResult = await runBazel(
-        ['query', ...asStringArray(args.extraArgs, 'extraArgs'), expression],
+        ['query', '--output=label', ...asStringArray(args.extraArgs, 'extraArgs'), expression],
         numberOrUndefined(args.timeoutSeconds) || 600,
         asStringArray(args.startupArgs, 'startupArgs'),
       );
-      return toolText(formatCommandResult(commandResult), commandResult.exitCode !== 0);
+      if (commandResult.exitCode !== 0) {
+        return toolText(formatCommandResult(commandResult), true);
+      }
+      const targets = parseTargetLabels(commandResult.output);
+      const text = targets.length
+        ? `Found ${targets.length} ${kind} target(s):\n${targets.join('\n')}`
+        : `No ${kind} targets found in scope.`;
+      return toolResult(text, { count: targets.length, kind, targets });
     }
     case 'bazel_macos_coverage': {
       const target = requireLabel(args.target as string);
       const coverageArgs = [
         'coverage',
+        '--combined_report=lcov',
         ...configArgs(asStringArray(args.configs, 'configs')),
         ...asStringArray(args.extraArgs, 'extraArgs'),
       ];
@@ -299,9 +311,23 @@ export async function handle(name: string, args: JsonObject): Promise<ToolCallRe
         if (!appPath) throw new Error(`Could not locate .app for target ${args.target} in bazel-bin.`);
       }
       if (!appPath) throw new Error('Either appPath or target is required.');
+      const launchArgs = asStringArray(args.launchArgs, 'launchArgs');
+      const launchEnv = (args.launchEnv as Record<string, string> | undefined) || {};
+      // `open` cannot inject per-launch environment variables, so when
+      // launchEnv is requested we exec the app's Mach-O binary directly.
+      if (Object.keys(launchEnv).length > 0) {
+        const exec = readInfoPlistValue(appPath, 'CFBundleExecutable');
+        if (!exec) throw new Error(`Could not read CFBundleExecutable from ${appPath}.`);
+        const binary = join(appPath, 'Contents', 'MacOS', exec);
+        const result = await runCommand(binary, launchArgs, {
+          cwd: process.cwd(), timeoutSeconds: 30, maxOutput: 50_000,
+          env: { ...process.env, ...launchEnv },
+        });
+        return toolText(`Launched: ${binary}\n${formatCommandResult(result)}`, result.exitCode !== 0);
+      }
       const launchCmdArgs = ['open', appPath];
-      if (args.launchArgs) {
-        launchCmdArgs.push('--args', ...asStringArray(args.launchArgs, 'launchArgs'));
+      if (launchArgs.length > 0) {
+        launchCmdArgs.push('--args', ...launchArgs);
       }
       const result = await runCommand(launchCmdArgs[0], launchCmdArgs.slice(1), {
         cwd: process.cwd(), timeoutSeconds: 30, maxOutput: 50_000,
@@ -347,7 +373,10 @@ export async function handle(name: string, args: JsonObject): Promise<ToolCallRe
       return toolText(appPath);
     }
     case 'bazel_macos_bundle_id': {
-      const appPathStr = args.appPath as string;
+      if (typeof args.appPath !== 'string' || !args.appPath.trim()) {
+        throw new Error('appPath is required (path to a .app bundle or a Bazel target label).');
+      }
+      const appPathStr = args.appPath;
       let resolvedPath = appPathStr;
       if (appPathStr.startsWith('//')) {
         const config = getConfig();
@@ -360,8 +389,23 @@ export async function handle(name: string, args: JsonObject): Promise<ToolCallRe
     }
     case 'bazel_macos_log': {
       const logArgs = ['stream', '--style', 'compact'];
-      if (args.level) logArgs.push('--level', args.level as string);
-      if (args.processName) logArgs.push('--predicate', `processImagePath ENDSWITH "${String(args.processName).replace(/"/g, '\\"')}"`);
+      if (args.level !== undefined) {
+        const validLevels = ['default', 'info', 'debug'];
+        if (typeof args.level !== 'string' || !validLevels.includes(args.level)) {
+          throw new Error(`Invalid level "${args.level}". Expected one of: ${validLevels.join(', ')}.`);
+        }
+        logArgs.push('--level', args.level);
+      }
+      if (args.processName !== undefined) {
+        const processName = String(args.processName);
+        // Reject control characters / backslashes that could break out of the
+        // quoted NSPredicate; quotes are escaped below.
+        // eslint-disable-next-line no-control-regex
+        if (/[\u0000-\u001f\\]/.test(processName)) {
+          throw new Error('processName contains invalid characters.');
+        }
+        logArgs.push('--predicate', `processImagePath ENDSWITH "${processName.replace(/"/g, '\\"')}"`);
+      }
       const timeout = numberOrUndefined(args.timeoutSeconds) || 30;
       const result = await runCommand('log', logArgs, {
         cwd: process.cwd(), timeoutSeconds: timeout, maxOutput: 500_000,
@@ -375,7 +419,11 @@ export async function handle(name: string, args: JsonObject): Promise<ToolCallRe
       const result = await runCommand('screencapture', captureArgs, {
         cwd: process.cwd(), timeoutSeconds: 10, maxOutput: 10_000,
       });
-      return toolText(`Screenshot saved to ${args.outputPath}\n${formatCommandResult(result)}`, result.exitCode !== 0);
+      return toolResult(
+        `Screenshot saved to ${args.outputPath}\n${formatCommandResult(result)}`,
+        { ...structuredCommandResult(result), outputPath: args.outputPath },
+        result.exitCode !== 0,
+      );
     }
     default:
       return undefined;

@@ -12,6 +12,7 @@ import {
   asStringArray,
   buildCommandArgs,
   configArgs,
+  iosSimulatorCpuArg,
   modeArgs,
   platformArgs,
   requireLabel,
@@ -23,7 +24,7 @@ import {
 import { bootSimulatorIfNeeded, findAppBundle, installApp, launchApp, readBundleId, resolveSimulator } from '../core/simulators.js';
 import { withTestSimulatorHooks } from '../core/test-simulator.js';
 import { deployBuiltAppToDevice } from '../core/device-deploy.js';
-import { swiftBuildStreaming, swiftTestStreaming, type SwiftBuildConfiguration } from '../core/swift-package.js';
+import { swiftBuildStreaming, swiftRunStreaming, swiftTestStreaming, type SwiftBuildConfiguration } from '../core/swift-package.js';
 import { getConfig } from '../runtime/config.js';
 import { formatCommandResult, structuredCommandResult, toolResult, toolText } from '../utils/output.js';
 import { applyDefaults, numberOrUndefined, prependWarning, stringOrUndefined } from './helpers.js';
@@ -52,6 +53,7 @@ const STREAMING_TOOLS = new Set([
   'bazel_visionos_test',
   'swift_package_build',
   'swift_package_test',
+  'swift_package_run',
 ]);
 
 export async function callBazelToolStreaming(
@@ -64,7 +66,7 @@ export async function callBazelToolStreaming(
     return callBazelTool(name, args);
   }
 
-  if (name === 'swift_package_build' || name === 'swift_package_test') {
+  if (name === 'swift_package_build' || name === 'swift_package_test' || name === 'swift_package_run') {
     return streamSwiftPackageTool(name, args, onProgress);
   }
 
@@ -142,7 +144,13 @@ export async function callBazelToolStreaming(
   const output = cleanupSummary
     ? `${formatCommandResult(finalResult)}\n\n${cleanupSummary}`
     : formatCommandResult(finalResult);
-  return toolText(output, finalResult.exitCode !== 0);
+  // Return structured content so streaming results carry the same machine-
+  // readable failure data (category, diagnostics, exitCode) as the
+  // non-streaming handlers.
+  const structured: Record<string, unknown> = { ...structuredCommandResult(finalResult) };
+  if (typeof args.target === 'string') structured.target = args.target;
+  if (typeof args.testFilter === 'string') structured.testFilter = args.testFilter;
+  return toolResult(output, structured, finalResult.exitCode !== 0);
 }
 
 async function streamSwiftPackageTool(
@@ -151,21 +159,24 @@ async function streamSwiftPackageTool(
   onProgress: (chunk: string) => void,
 ) {
   const pkgPath = stringOrUndefined(args.packagePath) || getConfig().workspacePath;
-  const generator = name === 'swift_package_build'
-    ? swiftBuildStreaming({
-        packagePath: pkgPath,
-        configuration: stringOrUndefined(args.configuration) as SwiftBuildConfiguration | undefined,
-        target: stringOrUndefined(args.target),
-        extraArgs: asStringArray(args.extraArgs, 'extraArgs'),
-        timeoutSeconds: numberOrUndefined(args.timeoutSeconds),
-      })
-    : swiftTestStreaming({
-        packagePath: pkgPath,
-        filter: stringOrUndefined(args.filter),
-        configuration: stringOrUndefined(args.configuration) as SwiftBuildConfiguration | undefined,
-        extraArgs: asStringArray(args.extraArgs, 'extraArgs'),
-        timeoutSeconds: numberOrUndefined(args.timeoutSeconds),
-      });
+  const configuration = stringOrUndefined(args.configuration) as SwiftBuildConfiguration | undefined;
+  const extraArgs = asStringArray(args.extraArgs, 'extraArgs');
+  const timeoutSeconds = numberOrUndefined(args.timeoutSeconds);
+  let generator: AsyncGenerator<import('../utils/process.js').StreamChunk | CommandResult>;
+  if (name === 'swift_package_build') {
+    generator = swiftBuildStreaming({ packagePath: pkgPath, configuration, target: stringOrUndefined(args.target), extraArgs, timeoutSeconds });
+  } else if (name === 'swift_package_run') {
+    generator = swiftRunStreaming({
+      packagePath: pkgPath,
+      executable: stringOrUndefined(args.executable),
+      configuration,
+      extraArgs,
+      runArgs: asStringArray(args.runArgs, 'runArgs'),
+      timeoutSeconds,
+    });
+  } else {
+    generator = swiftTestStreaming({ packagePath: pkgPath, filter: stringOrUndefined(args.filter), configuration, extraArgs, timeoutSeconds });
+  }
 
   let finalResult: CommandResult | undefined;
   for await (const chunk of generator) {
@@ -206,7 +217,7 @@ function buildStreamingBazelArgs(name: string, args: JsonObject): string[] {
       const bazelArgs = [
         'test',
         '--test_output=errors',
-        '--ios_multi_cpus=sim_arm64',
+        iosSimulatorCpuArg(),
         ...simulatorArgs(testArgs),
         ...configArgs(testArgs.configs),
         ...asStringArray(testArgs.extraArgs, 'extraArgs'),
@@ -252,6 +263,7 @@ function buildStreamingBazelArgs(name: string, args: JsonObject): string[] {
       const target = requireLabel(testArgs.target);
       const bazelArgs = [
         'coverage',
+        '--combined_report=lcov',
         ...configArgs(testArgs.configs),
         ...asStringArray(testArgs.extraArgs, 'extraArgs'),
         ...testFilterArgs(testArgs.testFilter),

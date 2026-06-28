@@ -11,6 +11,34 @@ export interface LldbSession {
 const MAX_OUTPUT = 500_000;
 const sessions = new Map<string, LldbSession>();
 let sessionCounter = 0;
+let markerSeq = 0;
+
+/**
+ * Kill every live LLDB session. Called on server shutdown so attached `lldb`
+ * child processes aren't left running.
+ */
+export function killAllSessions(): void {
+  for (const [id, session] of sessions) {
+    try { session.child.kill('SIGTERM'); } catch { /* noop */ }
+    sessions.delete(id);
+  }
+}
+
+/** Append to a session transcript, keeping only the most recent MAX_OUTPUT chars. */
+function appendSessionOutput(session: LldbSession, text: string): void {
+  session.output += text;
+  if (session.output.length > MAX_OUTPUT) {
+    session.output = session.output.slice(-MAX_OUTPUT);
+  }
+}
+
+/** Reject values that would break out of a quoted LLDB argument or inject commands. */
+function assertLldbArg(value: string, field: string): string {
+  if (/[\n\r"]/.test(value)) {
+    throw new Error(`Invalid ${field}: must not contain newlines or double quotes.`);
+  }
+  return value;
+}
 
 export function getSession(sessionId: string): LldbSession {
   const session = sessions.get(sessionId);
@@ -41,6 +69,7 @@ export async function attachToProcess(
   deviceName?: string,
 ): Promise<{ sessionId: string; output: string }> {
   const sessionId = `lldb-${++sessionCounter}`;
+  if (deviceName) assertLldbArg(deviceName, 'deviceName');
 
   const child = spawn('xcrun', ['lldb', '--no-use-colors'], {
     stdio: ['pipe', 'pipe', 'pipe'],
@@ -49,16 +78,8 @@ export async function attachToProcess(
   const session: LldbSession = { child, output: '', pid, processName, target };
   sessions.set(sessionId, session);
 
-  child.stdout!.on('data', (chunk: Buffer) => {
-    if (session.output.length < MAX_OUTPUT) {
-      session.output += chunk.toString();
-    }
-  });
-  child.stderr!.on('data', (chunk: Buffer) => {
-    if (session.output.length < MAX_OUTPUT) {
-      session.output += chunk.toString();
-    }
-  });
+  child.stdout!.on('data', (chunk: Buffer) => appendSessionOutput(session, chunk.toString()));
+  child.stderr!.on('data', (chunk: Buffer) => appendSessionOutput(session, chunk.toString()));
 
   child.on('close', () => {
     sessions.delete(sessionId);
@@ -87,6 +108,8 @@ export async function attachByName(
   deviceName?: string,
 ): Promise<{ sessionId: string; output: string }> {
   const sessionId = `lldb-${++sessionCounter}`;
+  assertLldbArg(processName, 'processName');
+  if (deviceName) assertLldbArg(deviceName, 'deviceName');
 
   const child = spawn('xcrun', ['lldb', '--no-use-colors'], {
     stdio: ['pipe', 'pipe', 'pipe'],
@@ -95,16 +118,8 @@ export async function attachByName(
   const session: LldbSession = { child, output: '', pid: 0, processName, target };
   sessions.set(sessionId, session);
 
-  child.stdout!.on('data', (chunk: Buffer) => {
-    if (session.output.length < MAX_OUTPUT) {
-      session.output += chunk.toString();
-    }
-  });
-  child.stderr!.on('data', (chunk: Buffer) => {
-    if (session.output.length < MAX_OUTPUT) {
-      session.output += chunk.toString();
-    }
-  });
+  child.stdout!.on('data', (chunk: Buffer) => appendSessionOutput(session, chunk.toString()));
+  child.stderr!.on('data', (chunk: Buffer) => appendSessionOutput(session, chunk.toString()));
 
   child.on('close', () => {
     sessions.delete(sessionId);
@@ -157,12 +172,26 @@ export async function setBreakpoint(
   },
 ): Promise<string> {
   const session = getSession(sessionId);
+  // A newline in any field would inject additional LLDB commands (each
+  // sendCommand writes `<command>\n`), and a double-quote would break out of
+  // the quoted argument. Reject both in the structured fields.
+  const assertSafe = (value: string, field: string): string => {
+    if (/[\n\r"]/.test(value)) {
+      throw new Error(`Invalid ${field}: must not contain newlines or double quotes.`);
+    }
+    return value;
+  };
   const parts = ['breakpoint set'];
-  if (options.file) parts.push(`--file "${options.file}"`);
+  if (options.file) parts.push(`--file "${assertSafe(options.file, 'file')}"`);
   if (options.line !== undefined) parts.push(`--line ${options.line}`);
-  if (options.symbol) parts.push(`--name "${options.symbol}"`);
-  if (options.module) parts.push(`--shlib "${options.module}"`);
-  if (options.condition) parts.push(`--condition '${options.condition}'`);
+  if (options.symbol) parts.push(`--name "${assertSafe(options.symbol, 'symbol')}"`);
+  if (options.module) parts.push(`--shlib "${assertSafe(options.module, 'module')}"`);
+  if (options.condition) {
+    if (/[\n\r]/.test(options.condition)) {
+      throw new Error('Invalid condition: must not contain newlines.');
+    }
+    parts.push(`--condition '${options.condition}'`);
+  }
   if (options.oneShot) parts.push('--one-shot true');
   return sendCommand(session, parts.join(' '));
 }
@@ -217,6 +246,11 @@ export async function getVariables(sessionId: string, scope: 'local' | 'args' | 
 
 export async function evaluateExpression(sessionId: string, expression: string): Promise<string> {
   const session = getSession(sessionId);
+  // A newline would be split into multiple LLDB commands. Use lldb_command for
+  // multi-statement input instead.
+  if (/[\n\r]/.test(expression)) {
+    throw new Error('Expression must be a single line. Use lldb_command for multi-line input.');
+  }
   return sendCommand(session, `expression -- ${expression}`);
 }
 
@@ -255,44 +289,42 @@ function cleanLldbOutput(raw: string): string {
 
 async function sendCommand(session: LldbSession, command: string, timeoutMs = 10_000): Promise<string> {
   return new Promise<string>((resolve, reject) => {
-    const markerBegin = `__XBMCP_BEGIN_${Date.now()}__`;
-    const markerEnd = `__XBMCP_END_${Date.now()}__`;
+    const stamp = `${Date.now()}_${++markerSeq}`;
+    const markerBegin = `__XBMCP_BEGIN_${stamp}__`;
+    const markerEnd = `__XBMCP_END_${stamp}__`;
 
-    const outputBefore = session.output.length;
-    let collected = '';
-    let capturing = false;
+    // Accumulate this command's output independently of session.output, which
+    // is capped at MAX_OUTPUT — relying on the capped transcript would deadlock
+    // every command once a long-running session passes the cap.
+    let acc = '';
+    let beginIdx = -1;
 
-    const onData = () => {
-      const newOutput = session.output.slice(outputBefore);
-      if (!capturing) {
-        const beginIdx = newOutput.indexOf(markerBegin);
-        if (beginIdx !== -1) {
-          capturing = true;
-          collected = newOutput.slice(beginIdx + markerBegin.length);
+    const onData = (chunk: Buffer) => {
+      acc += chunk.toString();
+      if (beginIdx === -1) {
+        const b = acc.indexOf(markerBegin);
+        if (b === -1) {
+          // Before the begin marker arrives, bound memory by keeping only a
+          // tail large enough to still contain a (possibly split) marker.
+          if (acc.length > MAX_OUTPUT) acc = acc.slice(-1024);
+          return;
         }
-      } else {
-        collected = session.output.slice(outputBefore);
-        const beginIdx = collected.indexOf(markerBegin);
-        if (beginIdx !== -1) {
-          collected = collected.slice(beginIdx + markerBegin.length);
-        }
+        beginIdx = b + markerBegin.length;
       }
-      if (capturing) {
-        const endIdx = collected.indexOf(markerEnd);
-        if (endIdx !== -1) {
-          cleanup();
-          resolve(cleanLldbOutput(collected.slice(0, endIdx)));
-        }
+      const endIdx = acc.indexOf(markerEnd, beginIdx);
+      if (endIdx !== -1) {
+        cleanup();
+        resolve(cleanLldbOutput(acc.slice(beginIdx, endIdx)));
       }
     };
 
     const timer = setTimeout(() => {
       cleanup();
-      const allNew = session.output.slice(outputBefore).trim();
-      resolve(cleanLldbOutput(allNew) || '(timeout waiting for LLDB response)');
+      const captured = beginIdx >= 0 ? acc.slice(beginIdx) : acc;
+      resolve(cleanLldbOutput(captured.trim()) || '(timeout waiting for LLDB response)');
     }, timeoutMs);
 
-    const dataHandler = () => onData();
+    const dataHandler = (chunk: Buffer) => onData(chunk);
     session.child.stdout!.on('data', dataHandler);
     session.child.stderr!.on('data', dataHandler);
 
@@ -330,7 +362,7 @@ async function waitForProcessStop(session: LldbSession, timeoutMs: number): Prom
 
     const check = () => {
       const newOut = session.output.slice(startLen);
-      if (newOut.includes('stopped') || newOut.includes('Process ')) {
+      if (/stop reason|stopped/.test(newOut)) {
         clearTimeout(timer);
         session.child.stdout!.removeListener('data', check);
         setTimeout(() => {

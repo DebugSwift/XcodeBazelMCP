@@ -28,6 +28,7 @@ export const WORKFLOWS: WorkflowInfo[] = [
       'bazel_ios_set_simulator_location', 'bazel_ios_set_simulator_appearance',
       'bazel_ios_open_simulator', 'bazel_ios_set_status_bar',
       'bazel_ios_privacy', 'bazel_ios_ui_dump',
+      'bazel_ios_add_media', 'bazel_ios_get_app_container',
     ],
   },
   {
@@ -36,7 +37,7 @@ export const WORKFLOWS: WorkflowInfo[] = [
     description: 'Install, launch, and stop apps on simulator.',
     tools: [
       'bazel_ios_install_app', 'bazel_ios_launch_app', 'bazel_ios_stop_app',
-      'bazel_ios_get_app_path', 'bazel_ios_get_bundle_id',
+      'bazel_ios_uninstall_app', 'bazel_ios_get_app_path', 'bazel_ios_get_bundle_id',
     ],
   },
   {
@@ -84,7 +85,8 @@ export const WORKFLOWS: WorkflowInfo[] = [
       'bazel_ios_list_devices', 'bazel_ios_device_build_and_run',
       'bazel_ios_device_get_app_path',
       'bazel_ios_device_install_app', 'bazel_ios_device_launch_app',
-      'bazel_ios_device_stop_app', 'bazel_ios_device_test',
+      'bazel_ios_device_stop_app', 'bazel_ios_device_uninstall_app',
+      'bazel_ios_device_list_apps', 'bazel_ios_device_test',
       'bazel_ios_device_screenshot', 'bazel_ios_device_log_start',
       'bazel_ios_device_log_stop', 'bazel_ios_device_info',
       'bazel_ios_device_pair', 'bazel_ios_device_unpair',
@@ -191,6 +193,16 @@ export const WORKFLOWS: WorkflowInfo[] = [
     description: 'Check for and install updates.',
     tools: ['bazel_check_update', 'bazel_upgrade'],
   },
+  {
+    id: 'xcode',
+    name: 'Xcode Native MCP (26.3+)',
+    description: "Detect and bridge Apple's native Xcode MCP integration, DeviceHub, and skill export.",
+    tools: [
+      'bazel_xcode_native_mcp_status',
+      'bazel_xcode_open_device_hub',
+      'bazel_xcode_export_skills',
+    ],
+  },
 ];
 
 const ALL_WORKFLOW_IDS = new Set(WORKFLOWS.map((w) => w.id));
@@ -220,6 +232,10 @@ export function getEnabledToolNames(enabledWorkflows?: string[]): Set<string> | 
   enabled.add('bazel_toggle_workflow');
   enabled.add('bazel_ios_set_workspace');
   enabled.add('bazel_ios_show_defaults');
+  // Always expose defaults management + the health check so an agent on any
+  // filtered workflow set can configure the session and run diagnostics.
+  enabled.add('bazel_ios_set_defaults');
+  enabled.add('bazel_ios_health');
   return enabled;
 }
 

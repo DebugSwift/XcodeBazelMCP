@@ -49,10 +49,14 @@ export function agentDebugLaunchEnv(logPath: string, sessionId: string): Record<
   };
 }
 
-export function clearAgentDebugLog(logPath: string): { logPath: string; cleared: boolean; existed: boolean } {
+export function clearAgentDebugLog(logPath: string): { logPath: string; cleared: boolean; existed: boolean; error?: string } {
   const existed = existsSync(logPath);
   if (existed) {
-    unlinkSync(logPath);
+    try {
+      unlinkSync(logPath);
+    } catch (err) {
+      return { logPath, cleared: false, existed, error: (err as Error).message };
+    }
   }
   return { logPath, cleared: true, existed };
 }
@@ -80,7 +84,10 @@ export function parseAgentDebugNdjson(content: string): {
 }
 
 function inferHypothesisStatus(entries: AgentDebugLogEntry[]): 'CONFIRMED' | 'REJECTED' | 'INCONCLUSIVE' | 'UNKNOWN' {
-  for (const entry of entries) {
+  // Scan newest-first so a later verdict (e.g. REJECTED after an earlier
+  // CONFIRMED) wins instead of whichever appeared first.
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i];
     const blob = `${entry.message ?? ''} ${JSON.stringify(entry.data ?? {})}`.toUpperCase();
     if (blob.includes('CONFIRMED')) return 'CONFIRMED';
     if (blob.includes('REJECTED')) return 'REJECTED';
@@ -165,7 +172,11 @@ export function discoverAgentDebugLogPaths(searchRoots: string[]): string[] {
       const logPath = resolve(cursorDir, entry);
       if (seen.has(logPath)) continue;
       seen.add(logPath);
-      discovered.push({ path: logPath, mtimeMs: statSync(logPath).mtimeMs });
+      try {
+        discovered.push({ path: logPath, mtimeMs: statSync(logPath).mtimeMs });
+      } catch {
+        // file vanished between readdir and stat — skip it
+      }
     }
   }
 
@@ -231,6 +242,7 @@ export async function pullAgentDebugLogFromSimulator(
   simulatorId: string;
   containerPath: string;
   sourcePath: string;
+  sourceExists: boolean;
   destPath?: string;
   read: AgentDebugReadResult;
   commandOutput: string;
@@ -250,6 +262,7 @@ export async function pullAgentDebugLogFromSimulator(
 
   const containerPath = result.output.trim();
   const sourcePath = join(containerPath, simRelPath);
+  const sourceExists = existsSync(sourcePath);
 
   let read: AgentDebugReadResult;
   let destPath: string | undefined;
@@ -258,7 +271,7 @@ export async function pullAgentDebugLogFromSimulator(
     destPath = options.destPath;
     const parent = dirname(destPath);
     if (!existsSync(parent)) mkdirSync(parent, { recursive: true });
-    if (existsSync(sourcePath)) {
+    if (sourceExists) {
       copyFileSync(sourcePath, destPath);
     } else {
       writeFileSync(destPath, '');
@@ -273,6 +286,7 @@ export async function pullAgentDebugLogFromSimulator(
     simulatorId: options.simulatorId,
     containerPath,
     sourcePath,
+    sourceExists,
     destPath,
     read,
     commandOutput: result.output.trim(),

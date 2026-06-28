@@ -9,12 +9,17 @@ import {
   buildCommandArgs,
   configArgs,
   discoverExpression,
+  defaultDiscoverScope,
+  iosSimulatorCpu,
+  iosSimulatorCpuArg,
   modeArgs,
+  parseTargetLabels,
   platformArgs,
   requireLabel,
   sanitizeQueryExpression,
   simulatorArgs,
   testFilterArgs,
+  tokenizeArgs,
   runBazel,
   runBazelStreaming,
   getLastCommand,
@@ -39,6 +44,34 @@ vi.mock('./workspace.js', () => ({
 
 const mockRunCommand = vi.mocked(runCommand);
 const mockRunCommandStreaming = vi.mocked(runCommandStreaming);
+
+describe('parseTargetLabels', () => {
+  it('keeps only label-like lines and drops bazel noise', () => {
+    const output = [
+      'INFO: Invocation ID: abc',
+      'Loading: 0 packages loaded',
+      'DEBUG: /Users/x/foo.bzl:34:18: unknown handled dep @swiftpkg_foo//:Bar',
+      'WARNING: something happened',
+      '//Apps/Consumer/ConsumerApp:DoorDash',
+      '//Apps/Consumer/ConsumerApp:Caviar',
+      '@rules_swift//swift:foo',
+      '',
+    ].join('\n');
+    expect(parseTargetLabels(output)).toEqual([
+      '//Apps/Consumer/ConsumerApp:Caviar',
+      '//Apps/Consumer/ConsumerApp:DoorDash',
+      '@rules_swift//swift:foo',
+    ]);
+  });
+
+  it('dedupes and sorts labels', () => {
+    expect(parseTargetLabels('//b:b\n//a:a\n//b:b\n')).toEqual(['//a:a', '//b:b']);
+  });
+
+  it('returns empty array for no labels', () => {
+    expect(parseTargetLabels('INFO: Empty results\nLoading: 0 packages loaded')).toEqual([]);
+  });
+});
 
 let tempDir: string;
 
@@ -155,6 +188,32 @@ describe('Bazel argument helpers', () => {
     expect(platformArgs('tvos')).toEqual(['--platforms=@build_bazel_apple_support//platforms:tvos_sim_arm64', '--tvos_cpus=sim_arm64']);
     expect(platformArgs('watchos')).toEqual(['--platforms=@build_bazel_apple_support//platforms:watchos_arm64', '--watchos_cpus=arm64']);
     expect(platformArgs('visionos')).toEqual(['--platforms=@build_bazel_apple_support//platforms:visionos_sim_arm64', '--visionos_cpus=sim_arm64']);
+  });
+
+  it('tokenizeArgs splits on whitespace and honors quotes', () => {
+    expect(tokenizeArgs('--batch --noautodetect_server_javabase')).toEqual(['--batch', '--noautodetect_server_javabase']);
+    expect(tokenizeArgs('--output_base="/path with space" --batch')).toEqual(['--output_base=/path with space', '--batch']);
+    expect(tokenizeArgs("--x='a b'")).toEqual(['--x=a b']);
+    expect(tokenizeArgs('   ')).toEqual([]);
+  });
+
+  it('iosSimulatorCpu defaults to host arch and respects BAZEL_IOS_SIMULATOR_CPU', () => {
+    const expected = process.arch === 'x64' ? 'x86_64' : 'sim_arm64';
+    expect(iosSimulatorCpu()).toBe(expected);
+    expect(iosSimulatorCpuArg()).toBe(`--ios_multi_cpus=${expected}`);
+
+    process.env.BAZEL_IOS_SIMULATOR_CPU = 'x86_64';
+    expect(iosSimulatorCpu()).toBe('x86_64');
+    expect(platformArgs('simulator')).toEqual(['--platforms=@build_bazel_apple_support//platforms:ios_x86_64', '--ios_multi_cpus=x86_64']);
+    delete process.env.BAZEL_IOS_SIMULATOR_CPU;
+  });
+
+  it('defaultDiscoverScope is overridable via BAZEL_IOS_DISCOVER_SCOPE', () => {
+    expect(defaultDiscoverScope()).toBe('(//Apps/... union //Packages/...)');
+    process.env.BAZEL_IOS_DISCOVER_SCOPE = '//...';
+    expect(defaultDiscoverScope()).toBe('//...');
+    expect(discoverExpression('apps')).toBe('kind("ios_application rule", //...)');
+    delete process.env.BAZEL_IOS_DISCOVER_SCOPE;
   });
 
   it('maps simulator and config options to Bazel flags', () => {
@@ -485,6 +544,7 @@ describe('runBazel', () => {
       cwd: tempDir,
       timeoutSeconds: undefined,
       maxOutput: expect.any(Number),
+      id: expect.any(String),
     });
   });
 
@@ -542,6 +602,7 @@ describe('runBazelStreaming', () => {
       cwd: tempDir,
       timeoutSeconds: undefined,
       maxOutput: expect.any(Number),
+      id: expect.any(String),
     });
     expect(chunks).toHaveLength(2);
   });

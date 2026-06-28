@@ -109,7 +109,7 @@ export async function handle(name: string, args: JsonObject): Promise<ToolCallRe
     case 'bazel_ios_agent_debug_log_clear': {
       if (typeof args.logPath !== 'string') throw new Error('logPath is required.');
       const result = clearAgentDebugLog(args.logPath);
-      return toolText(JSON.stringify(result, null, 2));
+      return toolText(JSON.stringify(result, null, 2), !result.cleared);
     }
     case 'bazel_ios_agent_debug_log_read': {
       if (typeof args.logPath !== 'string') throw new Error('logPath is required.');
@@ -169,11 +169,18 @@ export async function handle(name: string, args: JsonObject): Promise<ToolCallRe
           simulatorName: args.simulatorName,
           messageContains: 'agentDebugLog',
         });
-        const match = cap.content
-          .map((c) => (c.type === 'text' ? c.text : ''))
-          .join('\n')
-          .match(/Capture ID:\s*(\S+)/);
-        captureId = match?.[1];
+        // Prefer the structured captureId; fall back to parsing the text for
+        // older shapes.
+        const structuredId = cap.structuredContent?.captureId;
+        if (typeof structuredId === 'string') {
+          captureId = structuredId;
+        } else {
+          const match = cap.content
+            .map((c) => (c.type === 'text' ? c.text : ''))
+            .join('\n')
+            .match(/Capture ID:\s*(\S+)/);
+          captureId = match?.[1];
+        }
       }
 
       const summary = {

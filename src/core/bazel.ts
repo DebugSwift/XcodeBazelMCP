@@ -1,9 +1,92 @@
+import { randomUUID } from 'node:crypto';
 import { getConfig } from '../runtime/config.js';
 import type { BuildArgs, BuildMode, BuildPlatform, CommandResult, TargetKind } from '../types/index.js';
 import { runCommand, runCommandStreaming, type StreamChunk } from '../utils/process.js';
+import { logCommand } from './command-log.js';
 import { assertBazelWorkspace } from './workspace.js';
 
 let lastCommand: CommandResult | null = null;
+
+/**
+ * Split a shell-like string into argv tokens, honoring single/double quotes so
+ * a startup arg containing spaces (e.g. `--output_base="/path with space"`)
+ * survives as one token. Falls back to whitespace splitting for unquoted input.
+ */
+export function tokenizeArgs(input: string): string[] {
+  const tokens: string[] = [];
+  let cur = '';
+  let quote: '"' | "'" | null = null;
+  let hasToken = false;
+  for (const ch of input) {
+    if (quote) {
+      if (ch === quote) quote = null;
+      else cur += ch;
+    } else if (ch === '"' || ch === "'") {
+      quote = ch;
+      hasToken = true; // even an empty "" is a token
+    } else if (/\s/.test(ch)) {
+      if (hasToken) { tokens.push(cur); cur = ''; hasToken = false; }
+    } else {
+      cur += ch;
+      hasToken = true;
+    }
+  }
+  if (hasToken) tokens.push(cur);
+  return tokens;
+}
+
+function resolveStartupArgs(startupArgs: string[]): { envStartupArgs: string[]; all: string[] } {
+  const envStartupArgs = process.env.BAZEL_IOS_STARTUP_ARGS
+    ? tokenizeArgs(process.env.BAZEL_IOS_STARTUP_ARGS)
+    : [];
+  return { envStartupArgs, all: [...envStartupArgs, ...startupArgs] };
+}
+
+/**
+ * iOS simulator CPU token. Defaults to the host architecture (`sim_arm64` on
+ * Apple silicon, `x86_64` on Intel) so simulator builds work on both. Override
+ * with `BAZEL_IOS_SIMULATOR_CPU`.
+ */
+export function iosSimulatorCpu(): string {
+  const override = process.env.BAZEL_IOS_SIMULATOR_CPU?.trim();
+  if (override) return override;
+  return process.arch === 'x64' ? 'x86_64' : 'sim_arm64';
+}
+
+/** `--ios_multi_cpus=<cpu>` for simulator builds/tests, host-arch aware. */
+export function iosSimulatorCpuArg(): string {
+  return `--ios_multi_cpus=${iosSimulatorCpu()}`;
+}
+
+/**
+ * Attach resolved-config context (surfaced on failure) and record the
+ * invocation to the persistent command log with a correlation id.
+ */
+function finalizeBazelResult(
+  result: CommandResult,
+  ctx: { id: string; bazelPath: string; workspacePath: string; allStartupArgs: string[] },
+): CommandResult {
+  result.context = {
+    bazel: ctx.bazelPath,
+    workspace: ctx.workspacePath,
+    startupArgs: ctx.allStartupArgs.length ? ctx.allStartupArgs.join(' ') : '(none)',
+  };
+  logCommand({
+    id: ctx.id,
+    timestamp: Date.now(),
+    argv: [ctx.bazelPath, ...result.args],
+    cwd: ctx.workspacePath,
+    envOverrides: ctx.allStartupArgs.length ? ctx.allStartupArgs : undefined,
+    exitCode: result.exitCode,
+    durationMs: result.durationMs,
+    truncated: result.truncated || undefined,
+    failureKind: result.failureKind,
+    timedOut: result.timedOut,
+    bytesDropped: result.bytesDropped,
+  });
+  lastCommand = result;
+  return result;
+}
 
 export function getLastCommand(): CommandResult | null {
   return lastCommand;
@@ -32,7 +115,7 @@ export function sanitizeQueryExpression(expression: unknown): string {
     throw new Error('expression is required.');
   }
   if (/[;&|`$<>]/.test(expression)) {
-    throw new Error('expression contains shell-like control characters.');
+    throw new Error('expression contains shell-like control characters (none of ; & | ` $ < > are valid in a bazel query).');
   }
   return expression;
 }
@@ -71,8 +154,11 @@ export function platformArgs(platform?: BuildPlatform): string[] {
   switch (p) {
     case 'none':
       return [];
-    case 'simulator':
-      return ['--platforms=@build_bazel_apple_support//platforms:ios_sim_arm64', '--ios_multi_cpus=sim_arm64'];
+    case 'simulator': {
+      const cpu = iosSimulatorCpu();
+      const platformName = cpu === 'sim_arm64' ? 'ios_sim_arm64' : `ios_${cpu}`;
+      return [`--platforms=@build_bazel_apple_support//platforms:${platformName}`, `--ios_multi_cpus=${cpu}`];
+    }
     case 'device':
       return ['--platforms=@build_bazel_apple_support//platforms:ios_arm64', '--ios_multi_cpus=arm64'];
     case 'macos':
@@ -109,8 +195,33 @@ export function configArgs(value: unknown): string[] {
   });
 }
 
+/**
+ * Extract Bazel target labels from `bazel query` output. Bazel writes
+ * progress/INFO/WARNING/DEBUG lines to stderr which `runCommand` merges into the
+ * combined output, so we keep only lines that look like a bare label/pattern.
+ */
+export function parseTargetLabels(output: string): string[] {
+  const seen = new Set<string>();
+  for (const rawLine of output.split('\n')) {
+    const line = rawLine.trim();
+    if (!line || line.includes(' ') || line.includes('\t')) continue;
+    if (!line.includes('//')) continue;
+    if (line.startsWith('//') || line.startsWith('@')) seen.add(line);
+  }
+  return [...seen].sort();
+}
+
+/**
+ * Default bazel query scope for target discovery. Overridable via
+ * `BAZEL_IOS_DISCOVER_SCOPE` so non-monorepo workspaces (without //Apps and
+ * //Packages) can point discovery at e.g. `//...`.
+ */
+export function defaultDiscoverScope(): string {
+  return process.env.BAZEL_IOS_DISCOVER_SCOPE?.trim() || '(//Apps/... union //Packages/...)';
+}
+
 export function discoverExpression(kind: TargetKind = 'all', scope?: string): string {
-  const queryScope = scope || '(//Apps/... union //Packages/...)';
+  const queryScope = scope || defaultDiscoverScope();
   switch (kind) {
     case 'apps':
       return `kind("ios_application rule", ${queryScope})`;
@@ -156,16 +267,20 @@ export async function runBazel(
 ): Promise<CommandResult> {
   const config = getConfig();
   assertBazelWorkspace(config.workspacePath);
-  const envStartupArgs = process.env.BAZEL_IOS_STARTUP_ARGS
-    ? process.env.BAZEL_IOS_STARTUP_ARGS.split(/\s+/).filter(Boolean)
-    : [];
-  const result = await runCommand(config.bazelPath, [...envStartupArgs, ...startupArgs, ...args], {
+  const { all: allStartupArgs } = resolveStartupArgs(startupArgs);
+  const id = randomUUID().slice(0, 8);
+  const result = await runCommand(config.bazelPath, [...allStartupArgs, ...args], {
     cwd: config.workspacePath,
     timeoutSeconds,
     maxOutput: config.maxOutput,
+    id,
   });
-  lastCommand = result;
-  return result;
+  return finalizeBazelResult(result, {
+    id,
+    bazelPath: config.bazelPath,
+    workspacePath: config.workspacePath,
+    allStartupArgs,
+  });
 }
 
 export async function* runBazelStreaming(
@@ -175,26 +290,28 @@ export async function* runBazelStreaming(
 ): AsyncGenerator<StreamChunk | CommandResult> {
   const config = getConfig();
   assertBazelWorkspace(config.workspacePath);
-  const envStartupArgs = process.env.BAZEL_IOS_STARTUP_ARGS
-    ? process.env.BAZEL_IOS_STARTUP_ARGS.split(/\s+/).filter(Boolean)
-    : [];
+  const { all: allStartupArgs } = resolveStartupArgs(startupArgs);
+  const id = randomUUID().slice(0, 8);
 
-  let finalResult: CommandResult | undefined;
   for await (const chunk of runCommandStreaming(
     config.bazelPath,
-    [...envStartupArgs, ...startupArgs, ...args],
+    [...allStartupArgs, ...args],
     {
       cwd: config.workspacePath,
       timeoutSeconds,
       maxOutput: config.maxOutput,
+      id,
     },
   )) {
     if ('stream' in chunk) {
       yield chunk;
     } else {
-      finalResult = chunk;
-      lastCommand = finalResult;
-      yield finalResult;
+      yield finalizeBazelResult(chunk, {
+        id,
+        bazelPath: config.bazelPath,
+        workspacePath: config.workspacePath,
+        allStartupArgs,
+      });
     }
   }
 }

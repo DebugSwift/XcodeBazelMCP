@@ -15,18 +15,26 @@ export function extractText(result: Awaited<ReturnType<typeof callBazelTool>>): 
 }
 
 export async function printTool(name: string, args: JsonObject): Promise<void> {
-  if (args.streaming) {
-    const result = await callBazelToolStreaming(name, args, (chunk) => {
-      process.stdout.write(chunk);
-    });
-    console.log('');
+  try {
+    if (args.streaming) {
+      let streamedAny = false;
+      const result = await callBazelToolStreaming(name, args, (chunk) => {
+        streamedAny = true;
+        process.stdout.write(chunk);
+      });
+      if (streamedAny) console.log(''); // separate streamed progress from the summary
+      console.log(extractText(result));
+      if (result.isError) process.exitCode = 1;
+      return;
+    }
+    const result = await callBazelTool(name, args);
     console.log(extractText(result));
     if (result.isError) process.exitCode = 1;
-    return;
+  } catch (err) {
+    // Surface a clean message to CLI users instead of a raw Node stack trace.
+    console.error(`Error: ${(err as Error).message}`);
+    process.exitCode = 1;
   }
-  const result = await callBazelTool(name, args);
-  console.log(extractText(result));
-  if (result.isError) process.exitCode = 1;
 }
 
 function bundledSkillsDir(): string | null {
@@ -147,6 +155,24 @@ xcodebazelmcp coverage //tests:tests
   installBundledSkills();
 }
 
+/**
+ * Print update status. With `withExitCode`, set a scripting-friendly exit code:
+ * 0 = up to date / unknown, 1 = a newer version is available.
+ */
+export async function runCheckUpdate(withExitCode = false): Promise<void> {
+  const { checkForUpdate, upgradeHint } = await import('../core/upgrade.js');
+  const info = await checkForUpdate();
+  console.log(`Current version: ${info.current}`);
+  console.log(`Latest version: ${info.latest || '(unable to fetch)'}`);
+  console.log(`Install method: ${info.installMethod}`);
+  if (info.updateAvailable) {
+    console.log(`\nUpdate available! Run: ${upgradeHint(info.installMethod)}`);
+    if (withExitCode) process.exitCode = 1;
+  } else {
+    console.log('\nYou are up to date.');
+  }
+}
+
 export async function runUpgrade(args: string[]): Promise<void> {
   const { checkForUpdate, performUpgrade, upgradeHint } = await import('../core/upgrade.js');
   let method: import('../core/upgrade.js').InstallMethod | undefined;
@@ -164,9 +190,7 @@ export async function runUpgrade(args: string[]): Promise<void> {
     return;
   }
 
-  if (info.updateAvailable) {
-    console.log(`\nUpgrading via: ${upgradeHint(method || info.installMethod)}`);
-  }
+  console.log(`\nUpgrading via: ${upgradeHint(method || info.installMethod)}`);
 
   const result = await performUpgrade(method);
   console.log(result.output);
@@ -190,7 +214,41 @@ export async function runDaemon(args: string[]): Promise<void> {
     console.log(`Socket: ${info.socketPath}`);
     console.log('Press Ctrl+C to stop.');
   }
-  await new Promise<void>(() => {});
+  await new Promise<void>((resolve) => {
+    process.once('SIGINT', () => {
+      if (!process.env.XBMCP_DAEMON) console.log('\nDaemon stopping.');
+      resolve();
+    });
+    process.once('SIGTERM', resolve);
+  });
+}
+
+/**
+ * Resolve a booted simulator UDID from --simulator-id / --simulator-name, or
+ * fall back to the first booted device. Exits the process with a clear message
+ * if none can be found. Shared by the streaming CLI commands.
+ */
+async function resolveBootedSimulatorUdid(args: JsonObject): Promise<string> {
+  const result = await callBazelTool('bazel_ios_list_simulators', { onlyBooted: true });
+  let devices: Array<{ udid: string; name: string }> = [];
+  try {
+    devices = JSON.parse(extractText(result));
+  } catch {
+    /* empty */
+  }
+  let udid = args.simulatorId as string | undefined;
+  if (!udid && typeof args.simulatorName === 'string') {
+    const match = devices.find(
+      (d) => d.name.toLowerCase() === (args.simulatorName as string).toLowerCase(),
+    );
+    if (match) udid = match.udid;
+  }
+  if (!udid) udid = devices[0]?.udid;
+  if (!udid) {
+    console.error('No booted simulator found. Boot one first or pass --simulator-id / --simulator-name.');
+    process.exit(1);
+  }
+  return udid;
 }
 
 export async function runVideoRecord(args: JsonObject): Promise<void> {
@@ -198,19 +256,7 @@ export async function runVideoRecord(args: JsonObject): Promise<void> {
     console.error('Usage: xcodebazelmcp video-record <output.mp4> [--simulator-name "..."]');
     process.exit(1);
   }
-  const result = await callBazelTool('bazel_ios_list_simulators', { onlyBooted: true });
-  const text = extractText(result);
-  let devices: Array<{ udid: string; name: string }> = [];
-  try {
-    devices = JSON.parse(text);
-  } catch {
-    /* empty */
-  }
-  const udid = (args.simulatorId as string) || devices[0]?.udid;
-  if (!udid) {
-    console.error('No booted simulator found. Boot one first or pass --simulator-id.');
-    process.exit(1);
-  }
+  const udid = await resolveBootedSimulatorUdid(args);
 
   console.log(`Recording video from simulator ${udid}...`);
   console.log(`Output: ${args.outputPath}`);
@@ -231,40 +277,26 @@ export async function runVideoRecord(args: JsonObject): Promise<void> {
 }
 
 export async function runLogStream(args: JsonObject): Promise<void> {
-  const result = await callBazelTool('bazel_ios_list_simulators', { onlyBooted: true });
-  const text = extractText(result);
-  let devices: Array<{ udid: string; name: string }> = [];
-  try {
-    devices = JSON.parse(text);
-  } catch {
-    /* empty */
-  }
-
-  let udid = args.simulatorId as string | undefined;
-  if (!udid && typeof args.simulatorName === 'string') {
-    const match = devices.find(
-      (d) => d.name.toLowerCase() === (args.simulatorName as string).toLowerCase(),
-    );
-    if (match) udid = match.udid;
-  }
-  if (!udid) udid = devices[0]?.udid;
-  if (!udid) {
-    console.error('No booted simulator found. Boot one first or pass --simulator-id / --simulator-name.');
-    process.exit(1);
-  }
+  const udid = await resolveBootedSimulatorUdid(args);
 
   const logArgs = ['simctl', 'spawn', udid, 'log', 'stream', '--style', 'compact'];
   if (typeof args.level === 'string') logArgs.push('--level', args.level);
 
-  const predicates: string[] = [];
-  if (typeof args.processName === 'string') predicates.push(`process == "${args.processName}"`);
-  if (typeof args.subsystem === 'string') predicates.push(`subsystem == "${args.subsystem}"`);
-  if (predicates.length > 0) {
-    logArgs.push('--predicate', predicates.join(' OR '));
+  const { buildLogPredicate } = await import('../core/simulators.js');
+  let predicate: string | undefined;
+  try {
+    predicate = buildLogPredicate({
+      processName: typeof args.processName === 'string' ? args.processName : undefined,
+      subsystem: typeof args.subsystem === 'string' ? args.subsystem : undefined,
+    });
+  } catch (err) {
+    console.error(`Error: ${(err as Error).message}`);
+    process.exit(1);
   }
+  if (predicate) logArgs.push('--predicate', predicate);
 
   console.log(`Streaming logs from simulator ${udid}...`);
-  if (predicates.length > 0) console.log(`Filter: ${predicates.join(' OR ')}`);
+  if (predicate) console.log(`Filter: ${predicate}`);
   console.log('Press Ctrl+C to stop.\n');
 
   const child = spawn('xcrun', logArgs, { stdio: ['ignore', 'inherit', 'inherit'] });
@@ -311,6 +343,14 @@ export async function runSetupWizard(): Promise<void> {
   writeFileSync(configPath, lines.join('\n') + '\n');
 
   console.log(`\nConfig written to ${configPath}`);
-  console.log('\nTo use with MCP, add to your agent config:');
-  console.log(`  "command": "npx", "args": ["xcodebazelmcp", "mcp"]`);
+  console.log('\nTo use with MCP, add this to your agent config (e.g. .mcp.json / mcp.json):');
+  console.log(JSON.stringify({
+    mcpServers: {
+      XcodeBazelMCP: {
+        command: 'npx',
+        args: ['-y', 'xcodebazelmcp', 'mcp'],
+        env: { BAZEL_IOS_WORKSPACE: resolve(workspacePath) },
+      },
+    },
+  }, null, 2));
 }

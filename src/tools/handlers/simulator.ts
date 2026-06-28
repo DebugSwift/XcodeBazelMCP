@@ -1,13 +1,17 @@
 import { spawn } from 'node:child_process';
-import { join } from 'node:path';
+import { existsSync, mkdirSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import type { JsonObject, ToolCallResult, ToolDefinition, InstallAppArgs, LaunchAppArgs } from '../../types/index.js';
 import { asStringArray, requireLabel } from '../../core/bazel.js';
 import {
+  addMedia,
   bootSimulator,
   bootSimulatorIfNeeded,
+  buildLogPredicate,
   clearStatusBar,
   eraseSimulator,
   findAppBundle,
+  getAppContainer,
   getSimulatorUiState,
   installApp,
   launchApp,
@@ -25,8 +29,9 @@ import {
   startVideoRecording,
   takeScreenshot,
   terminateApp,
+  uninstallApp,
 } from '../../core/simulators.js';
-import { formatCommandResult, toolText } from '../../utils/output.js';
+import { formatCommandResult, structuredCommandResult, toolResult, toolText } from '../../utils/output.js';
 import { getConfig } from '../../runtime/config.js';
 import {
   logCaptures,
@@ -36,6 +41,7 @@ import {
   resolveSimulatorFromArgs,
   prependWarning,
   stringOrUndefined,
+  requireFiniteNumber,
 } from '../helpers.js';
 
 export const definitions: ToolDefinition[] = [
@@ -116,6 +122,7 @@ export const definitions: ToolDefinition[] = [
       type: 'object',
       properties: {
         simulatorId: { type: 'string', description: 'Simulator UDID to focus.' },
+        simulatorName: { type: 'string', description: 'Simulator name to focus (alternative to simulatorId).' },
       },
     },
   },
@@ -131,6 +138,7 @@ export const definitions: ToolDefinition[] = [
         batteryLevel: { type: 'number', description: 'Battery level 0-100.' },
         batteryState: { type: 'string', enum: ['charging', 'charged', 'discharging'], description: 'Battery state.' },
         networkType: { type: 'string', enum: ['wifi', '3g', '4g', '5g', 'lte', 'lte-a', 'lte+'], description: 'Cellular data type.' },
+        operatorName: { type: 'string', description: 'Carrier/operator name shown in the status bar.' },
         wifiBars: { type: 'number', description: 'Wi-Fi signal bars 0-3.' },
         cellularBars: { type: 'number', description: 'Cellular signal bars 0-4.' },
         clear: { type: 'boolean', description: 'Clear all overrides instead of setting them.' },
@@ -187,6 +195,7 @@ export const definitions: ToolDefinition[] = [
       properties: {
         bundleId: { type: 'string', description: 'App bundle identifier.' },
         simulatorId: { type: 'string', description: 'Simulator UDID.' },
+        simulatorName: { type: 'string', description: 'Simulator name (alternative to simulatorId).' },
         launchArgs: {
           type: 'array',
           items: { type: 'string' },
@@ -204,6 +213,19 @@ export const definitions: ToolDefinition[] = [
   {
     name: 'bazel_ios_stop_app',
     description: 'Terminate a running app on a booted simulator by bundle identifier.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        bundleId: { type: 'string', description: 'App bundle identifier (e.g. com.example.MyApp).' },
+        simulatorId: { type: 'string', description: 'Simulator UDID (default: first booted).' },
+        simulatorName: { type: 'string', description: 'Simulator name (alternative to simulatorId).' },
+      },
+      required: ['bundleId'],
+    },
+  },
+  {
+    name: 'bazel_ios_uninstall_app',
+    description: 'Uninstall an app from a simulator by bundle identifier.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -324,6 +346,33 @@ export const definitions: ToolDefinition[] = [
     },
   },
   {
+    name: 'bazel_ios_add_media',
+    description: 'Add photos/videos to a simulator photo library (simctl addmedia).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        paths: { type: 'array', items: { type: 'string' }, description: 'Absolute paths to image/video files to add.' },
+        simulatorId: { type: 'string', description: 'Simulator UDID (default: first booted).' },
+        simulatorName: { type: 'string', description: 'Simulator name (alternative to simulatorId).' },
+      },
+      required: ['paths'],
+    },
+  },
+  {
+    name: 'bazel_ios_get_app_container',
+    description: 'Get the on-disk container path for an installed app on a simulator (simctl get_app_container).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        bundleId: { type: 'string', description: 'App bundle identifier.' },
+        kind: { type: 'string', enum: ['app', 'data', 'groups'], description: 'Container kind (default: data).' },
+        simulatorId: { type: 'string', description: 'Simulator UDID (default: first booted).' },
+        simulatorName: { type: 'string', description: 'Simulator name (alternative to simulatorId).' },
+      },
+      required: ['bundleId'],
+    },
+  },
+  {
     name: 'bazel_ios_open_url',
     description: 'Open a URL on a booted simulator (deep links, universal links, web URLs).',
     inputSchema: {
@@ -395,11 +444,12 @@ export async function handle(name: string, args: JsonObject): Promise<ToolCallRe
       return toolText(formatCommandResult(result), result.exitCode !== 0);
     }
     case 'bazel_ios_set_simulator_location': {
-      if (typeof args.latitude !== 'number' || typeof args.longitude !== 'number') {
-        throw new Error('latitude and longitude are required numbers.');
-      }
+      const latitude = requireFiniteNumber(args.latitude, 'latitude');
+      const longitude = requireFiniteNumber(args.longitude, 'longitude');
+      if (latitude < -90 || latitude > 90) throw new Error('latitude must be between -90 and 90.');
+      if (longitude < -180 || longitude > 180) throw new Error('longitude must be between -180 and 180.');
       const { sim, warning: simWarning } = await resolveSimulatorFromArgs(args);
-      const result = await setSimulatorLocation(sim.udid, args.latitude, args.longitude);
+      const result = await setSimulatorLocation(sim.udid, latitude, longitude);
       return toolText(
         prependWarning(`Location set on ${sim.name} (${sim.udid}) to ${args.latitude}, ${args.longitude}\n${formatCommandResult(result)}`, simWarning),
         result.exitCode !== 0,
@@ -417,7 +467,12 @@ export async function handle(name: string, args: JsonObject): Promise<ToolCallRe
       );
     }
     case 'bazel_ios_open_simulator': {
-      const result = await openSimulatorApp(stringOrUndefined(args.simulatorId));
+      let udid = stringOrUndefined(args.simulatorId);
+      if (!udid && stringOrUndefined(args.simulatorName)) {
+        const { sim } = await resolveSimulatorFromArgs(args);
+        udid = sim.udid;
+      }
+      const result = await openSimulatorApp(udid);
       return toolText(formatCommandResult(result), result.exitCode !== 0);
     }
     case 'bazel_ios_set_status_bar': {
@@ -429,12 +484,21 @@ export async function handle(name: string, args: JsonObject): Promise<ToolCallRe
       const overrides: Record<string, string> = {};
       if (typeof args.time === 'string') overrides['time'] = args.time;
       if (typeof args.batteryLevel === 'number') overrides['batteryLevel'] = String(args.batteryLevel);
-      if (typeof args.batteryState === 'string') overrides['batteryState'] = args.batteryState;
-      if (typeof args.networkType === 'string') overrides['dataNetwork'] = args.networkType;
+      if (typeof args.batteryState === 'string') {
+        const states = ['charging', 'charged', 'discharging'];
+        if (!states.includes(args.batteryState)) throw new Error(`Invalid batteryState "${args.batteryState}". Expected: ${states.join(', ')}.`);
+        overrides['batteryState'] = args.batteryState;
+      }
+      if (typeof args.networkType === 'string') {
+        const nets = ['wifi', '3g', '4g', '5g', 'lte', 'lte-a', 'lte+'];
+        if (!nets.includes(args.networkType)) throw new Error(`Invalid networkType "${args.networkType}". Expected: ${nets.join(', ')}.`);
+        overrides['dataNetwork'] = args.networkType;
+      }
+      if (typeof args.operatorName === 'string') overrides['operatorName'] = args.operatorName;
       if (typeof args.wifiBars === 'number') overrides['wifiBars'] = String(args.wifiBars);
       if (typeof args.cellularBars === 'number') overrides['cellularBars'] = String(args.cellularBars);
       if (Object.keys(overrides).length === 0) {
-        return toolText('No overrides specified. Pass time, batteryLevel, batteryState, networkType, wifiBars, or cellularBars.', true);
+        return toolText('No overrides specified. Pass time, batteryLevel, batteryState, networkType, operatorName, wifiBars, or cellularBars.', true);
       }
       const result = await setStatusBar(sim.udid, overrides);
       return toolText(
@@ -494,7 +558,16 @@ export async function handle(name: string, args: JsonObject): Promise<ToolCallRe
         formatCommandResult(installResult),
       ];
 
-      return toolText(prependWarning(lines.join('\n'), simWarning), installResult.exitCode !== 0);
+      return toolResult(
+        prependWarning(lines.join('\n'), simWarning),
+        {
+          ...structuredCommandResult(installResult),
+          simulator: { name: simulator.name, udid: simulator.udid },
+          bundleId: bundleId === '(unknown)' ? undefined : bundleId,
+          appPath: installArgs.appPath,
+        },
+        installResult.exitCode !== 0,
+      );
     }
     case 'bazel_ios_launch_app': {
       const launchAppArgs = args as LaunchAppArgs;
@@ -528,6 +601,15 @@ export async function handle(name: string, args: JsonObject): Promise<ToolCallRe
         result.exitCode !== 0,
       );
     }
+    case 'bazel_ios_uninstall_app': {
+      if (typeof args.bundleId !== 'string' || !args.bundleId.trim()) throw new Error('bundleId is required.');
+      const { sim, warning: simWarning } = await resolveSimulatorFromArgs(args);
+      const result = await uninstallApp(sim.udid, args.bundleId);
+      return toolText(
+        prependWarning(`Uninstalled ${args.bundleId} from ${sim.name} (${sim.udid})\n${formatCommandResult(result)}`, simWarning),
+        result.exitCode !== 0,
+      );
+    }
     case 'bazel_ios_get_app_path': {
       const target = requireLabel(args.target);
       const config = getConfig();
@@ -553,6 +635,8 @@ export async function handle(name: string, args: JsonObject): Promise<ToolCallRe
       if (typeof args.outputPath !== 'string') throw new Error('outputPath is required.');
       const { sim, warning: simWarning } = await resolveSimulatorFromArgs(args);
       const mask = (args.mask as 'alpha' | 'black' | 'ignored') || 'ignored';
+      const shotParent = dirname(args.outputPath);
+      if (shotParent && !existsSync(shotParent)) mkdirSync(shotParent, { recursive: true });
       const result = await takeScreenshot(sim.udid, args.outputPath, mask);
       return toolText(
         prependWarning(`Screenshot saved to ${args.outputPath}\nSimulator: ${sim.name} (${sim.udid})\n${formatCommandResult(result)}`, simWarning),
@@ -571,9 +655,16 @@ export async function handle(name: string, args: JsonObject): Promise<ToolCallRe
       if (typeof args.recordingId !== 'string') throw new Error('recordingId is required.');
       const recording = videoRecordings.get(args.recordingId);
       if (!recording) throw new Error(`Unknown recording ID: ${args.recordingId}`);
-      recording.child.kill('SIGINT');
       videoRecordings.delete(args.recordingId);
-      await new Promise((resolve) => setTimeout(resolve, 500));
+      // Wait for simctl to flush and finalize the container; a fixed sleep can
+      // truncate the file on slow encodes, so await the child's exit (capped).
+      await new Promise<void>((resolve) => {
+        let settled = false;
+        const done = () => { if (!settled) { settled = true; resolve(); } };
+        recording.child.once('exit', done);
+        recording.child.kill('SIGINT');
+        setTimeout(done, 5_000).unref();
+      });
       return toolText(`Video recording stopped (${args.recordingId}).\nSaved to: ${recording.outputPath}`);
     }
     case 'bazel_ios_log_capture_start': {
@@ -584,12 +675,11 @@ export async function handle(name: string, args: JsonObject): Promise<ToolCallRe
       const logArgs = ['simctl', 'spawn', sim.udid, 'log', 'stream', '--style', 'compact'];
       if (typeof args.level === 'string') logArgs.push('--level', args.level);
 
-      const predicates: string[] = [];
-      if (typeof args.processName === 'string') predicates.push(`process == "${args.processName.replace(/"/g, '\\"')}"`);
-      if (typeof args.subsystem === 'string') predicates.push(`subsystem == "${args.subsystem.replace(/"/g, '\\"')}"`);
-      if (predicates.length > 0) {
-        logArgs.push('--predicate', predicates.join(' OR '));
-      }
+      const predicate = buildLogPredicate({
+        processName: stringOrUndefined(args.processName),
+        subsystem: stringOrUndefined(args.subsystem),
+      });
+      if (predicate) logArgs.push('--predicate', predicate);
 
       const child = spawn('xcrun', logArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
       const maxLogSize = 500_000;
@@ -599,6 +689,7 @@ export async function handle(name: string, args: JsonObject): Promise<ToolCallRe
         simulatorId: sim.udid,
         messageContains: stringOrUndefined(args.messageContains),
         jsonLinesOnly: args.jsonLinesOnly === true,
+        filterApplied: Boolean(predicate),
       };
       logCaptures.set(captureId, capture);
       child.stdout.on('data', (chunk: Buffer) => {
@@ -608,7 +699,10 @@ export async function handle(name: string, args: JsonObject): Promise<ToolCallRe
         if (capture.output.length < maxLogSize) capture.output += chunk.toString();
       });
 
-      return toolText(prependWarning(`Log capture started.\nCapture ID: ${captureId}\nSimulator: ${sim.name} (${sim.udid})`, simWarning));
+      return toolResult(
+        prependWarning(`Log capture started.\nCapture ID: ${captureId}\nSimulator: ${sim.name} (${sim.udid})`, simWarning),
+        { captureId, simulatorId: sim.udid, simulatorName: sim.name },
+      );
     }
     case 'bazel_ios_log_capture_stop': {
       if (typeof args.captureId !== 'string') throw new Error('captureId is required.');
@@ -618,7 +712,11 @@ export async function handle(name: string, args: JsonObject): Promise<ToolCallRe
       capture.child.kill('SIGTERM');
       logCaptures.delete(args.captureId);
 
-      const logOutput = capture.output || '(no logs captured)';
+      const noLogs = !capture.output;
+      let logOutput = capture.output || '(no logs captured)';
+      if (noLogs && capture.filterApplied) {
+        logOutput += '\nNote: a process/subsystem filter was applied — if the app never logged to it, the stream will be empty. Retry without the filter to confirm.';
+      }
       const truncated = logOutput.length >= 500_000 ? '\n[log output truncated at 500KB]' : '';
 
       if (capture.jsonLinesOnly || capture.messageContains) {
@@ -650,6 +748,9 @@ export async function handle(name: string, args: JsonObject): Promise<ToolCallRe
 
       let payloadPath = stringOrUndefined(args.payloadPath);
       let tempPayload = false;
+      if (payloadPath && !existsSync(payloadPath)) {
+        throw new Error(`payloadPath not found: ${payloadPath}`);
+      }
       if (!payloadPath) {
         const payload: Record<string, unknown> = { aps: {} };
         const aps = payload.aps as Record<string, unknown>;
@@ -675,8 +776,32 @@ export async function handle(name: string, args: JsonObject): Promise<ToolCallRe
         result.exitCode !== 0,
       );
     }
+    case 'bazel_ios_add_media': {
+      const paths = Array.isArray(args.paths) ? (args.paths as unknown[]).filter((p): p is string => typeof p === 'string') : [];
+      if (paths.length === 0) throw new Error('paths is required (array of file paths).');
+      const missing = paths.filter((p) => !existsSync(p));
+      if (missing.length > 0) throw new Error(`File(s) not found: ${missing.join(', ')}`);
+      const { sim, warning: simWarning } = await resolveSimulatorFromArgs(args);
+      const result = await addMedia(sim.udid, paths);
+      return toolText(
+        prependWarning(`Added ${paths.length} item(s) to ${sim.name} (${sim.udid})\n${formatCommandResult(result)}`, simWarning),
+        result.exitCode !== 0,
+      );
+    }
+    case 'bazel_ios_get_app_container': {
+      if (typeof args.bundleId !== 'string' || !args.bundleId.trim()) throw new Error('bundleId is required.');
+      const kind = (args.kind as 'app' | 'data' | 'groups') || 'data';
+      if (!['app', 'data', 'groups'].includes(kind)) throw new Error(`Invalid kind "${kind}". Expected app, data, or groups.`);
+      const { sim, warning: simWarning } = await resolveSimulatorFromArgs(args);
+      const result = await getAppContainer(sim.udid, args.bundleId, kind);
+      const body = result.exitCode === 0 ? result.output.trim() : formatCommandResult(result);
+      return toolText(prependWarning(body, simWarning), result.exitCode !== 0);
+    }
     case 'bazel_ios_open_url': {
-      if (typeof args.url !== 'string') throw new Error('url is required.');
+      if (typeof args.url !== 'string' || !args.url.trim()) throw new Error('url is required.');
+      if (!/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(args.url.trim())) {
+        throw new Error(`url "${args.url}" has no scheme. Use e.g. https://… or myapp://….`);
+      }
       const { sim, warning: simWarning } = await resolveSimulatorFromArgs(args);
       const result = await openUrl(sim.udid, args.url);
       return toolText(

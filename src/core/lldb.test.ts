@@ -12,6 +12,7 @@ import {
   getSession,
   getThreadList,
   getVariables,
+  killAllSessions,
   listBreakpoints,
   listSessions,
   runLldbCommand,
@@ -92,6 +93,20 @@ describe('listSessions', () => {
     const sessions = listSessions();
     expect(sessions).toHaveLength(1);
     expect(sessions[0]).toMatchObject({ sessionId, pid: 1234, processName: 'MyApp' });
+  });
+});
+
+describe('killAllSessions', () => {
+  it('terminates and clears every live session', async () => {
+    const mockChild = new MockChildProcess();
+    mockSpawn.mockReturnValue(mockChild as unknown as ChildProcess);
+    await attachToProcess(1234, 'MyApp');
+    expect(listSessions().length).toBeGreaterThan(0);
+
+    killAllSessions();
+
+    expect(mockChild.killed).toBe(true);
+    expect(listSessions()).toEqual([]);
   });
 });
 
@@ -230,6 +245,28 @@ describe('setBreakpoint', () => {
     await promise;
 
     expect(mockChild.stdin.write).toHaveBeenCalledWith('breakpoint set --file "main.swift" --line 42\n');
+  });
+
+  it('evaluateExpression rejects a multi-line expression (injection guard)', async () => {
+    const mockChild = new MockChildProcess();
+    mockSpawn.mockReturnValue(mockChild as unknown as ChildProcess);
+    const { sessionId } = await attachToProcess(1234, 'MyApp');
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await expect(evaluateExpression(sessionId, 'foo\nprocess kill')).rejects.toThrow('single line');
+  });
+
+  it('rejects a file/symbol containing a newline or quote (injection guard)', async () => {
+    const mockChild = new MockChildProcess();
+    mockSpawn.mockReturnValue(mockChild as unknown as ChildProcess);
+    const { sessionId } = await attachToProcess(1234, 'MyApp');
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    await expect(setBreakpoint(sessionId, { file: 'a.swift"\nprocess kill' })).rejects.toThrow(
+      'must not contain newlines or double quotes',
+    );
+    await expect(setBreakpoint(sessionId, { symbol: 'foo\nquit' })).rejects.toThrow(
+      'must not contain newlines or double quotes',
+    );
   });
 
   it('sends breakpoint set command with function name', async () => {

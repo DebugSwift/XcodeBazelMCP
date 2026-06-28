@@ -320,7 +320,9 @@ export async function simulatorAccessibilitySnapshot(
     const command = await idbCommand(['ui', 'describe-all', '--udid', simulatorUdid], 15);
     return {
       command,
-      tree: command.exitCode === 0 ? command.output : undefined,
+      // idb writes the JSON tree to stdout; prefer it so idb stderr noise can't
+      // corrupt the tree passed back to the caller.
+      tree: command.exitCode === 0 ? (command.stdout || command.output) : undefined,
     };
   }
 

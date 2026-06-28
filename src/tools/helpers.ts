@@ -9,6 +9,7 @@ export const logCaptures = new Map<string, {
   simulatorId: string;
   messageContains?: string;
   jsonLinesOnly?: boolean;
+  filterApplied?: boolean;
 }>();
 export let logCaptureCounter = 0;
 export function nextLogCaptureId(): number { return ++logCaptureCounter; }
@@ -18,6 +19,20 @@ export let videoRecordingCounter = 0;
 export function nextVideoRecordingId(): number { return ++videoRecordingCounter; }
 
 export const deviceLogCaptures = new Map<string, { child: ReturnType<typeof spawn>; getCaptured: () => string; tool?: string }>();
+
+/**
+ * Kill any still-running capture/recording child processes. Registered on
+ * server shutdown so simctl log/video/device-log children aren't orphaned when
+ * the MCP server exits without an explicit stop call.
+ */
+export function disposeAllCaptures(): void {
+  for (const { child } of logCaptures.values()) { try { child.kill('SIGTERM'); } catch { /* noop */ } }
+  for (const { child } of videoRecordings.values()) { try { child.kill('SIGINT'); } catch { /* noop */ } }
+  for (const { child } of deviceLogCaptures.values()) { try { child.kill('SIGTERM'); } catch { /* noop */ } }
+  logCaptures.clear();
+  videoRecordings.clear();
+  deviceLogCaptures.clear();
+}
 
 export function applyDefaults(args: JsonObject): JsonObject {
   const defaults = getDefaults();
@@ -50,7 +65,14 @@ export function stringOrUndefined(value: unknown): string | undefined {
 }
 
 export function numberOrUndefined(value: unknown): number | undefined {
-  return typeof value === 'number' ? value : undefined;
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+export function requireFiniteNumber(value: unknown, name: string): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    throw new Error(`${name} must be a finite number.`);
+  }
+  return value;
 }
 
 export function booleanOrUndefined(value: unknown): boolean | undefined {

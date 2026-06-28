@@ -5,8 +5,12 @@ import { DEFAULT_WORKFLOWS, compactToolSchema, getEnabledToolNames } from '../co
 import { getEnabledWorkflows } from '../runtime/config.js';
 import type { JsonObject } from '../types/index.js';
 import { formatCommandResult } from '../utils/output.js';
+import { disposeAllCaptures } from '../tools/helpers.js';
+import { killAllSessions } from '../core/lldb.js';
+import { getCurrentVersion } from '../core/upgrade.js';
 
-const SERVER_VERSION = '0.1.0';
+// Report the real installed version (was hardcoded '0.1.0', drifting from package.json).
+const SERVER_VERSION = getCurrentVersion();
 
 type RequestId = string | number | null;
 
@@ -38,6 +42,13 @@ export async function startMcpServer(): Promise<void> {
       sendError(null, -32700, `Parse error: ${(err as Error).message}`);
     }
   });
+
+  // Reap any in-flight simulator log/video/device-log children and attached
+  // LLDB sessions so they aren't orphaned when the server exits.
+  const reap = () => { disposeAllCaptures(); killAllSessions(); };
+  process.once('SIGINT', () => { reap(); process.exit(0); });
+  process.once('SIGTERM', () => { reap(); process.exit(0); });
+  process.once('exit', reap);
 
   await new Promise<void>((resolve) => rl.once('close', resolve));
 }

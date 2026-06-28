@@ -25,6 +25,8 @@ export const definitions: ToolDefinition[] = [
         bundleId: { type: 'string', description: 'Bundle identifier (default: com.example.<name>).' },
         minimumOs: { type: 'string', description: 'Minimum OS version (default: 17.0 for iOS, 14.0 for macOS).' },
         rulesVersion: { type: 'string', description: 'rules_apple version (default: 3.16.1).' },
+        bazelVersion: { type: 'string', description: 'Pin written to .bazelversion (default: 7.6.1).' },
+        families: { type: 'array', items: { type: 'string', enum: ['iphone', 'ipad'] }, description: 'iOS device families (default: iphone, ipad).' },
       },
       required: ['outputPath', 'name', 'template'],
     },
@@ -36,12 +38,12 @@ export const definitions: ToolDefinition[] = [
   },
   {
     name: 'bazel_daemon_start',
-    description: 'Start or ensure the per-workspace background daemon is running. The daemon keeps stateful operations (log captures, video recordings, LLDB sessions) alive across MCP reconnections.',
+    description: 'Start or ensure the per-workspace background daemon is running. The daemon exposes a coordination socket and tracks background-operation metadata for the workspace. Note: capture/recording/LLDB child processes currently run inside the MCP server process, not the daemon.',
     inputSchema: { type: 'object', properties: {} },
   },
   {
     name: 'bazel_daemon_stop',
-    description: 'Stop the per-workspace background daemon and clean up all active stateful operations.',
+    description: 'Stop the per-workspace background daemon and clear its tracked operation metadata.',
     inputSchema: { type: 'object', properties: {} },
   },
   {
@@ -89,6 +91,8 @@ export async function handle(name: string, args: JsonObject): Promise<ToolCallRe
         bundleId: stringOrUndefined(args.bundleId),
         minimumOs: stringOrUndefined(args.minimumOs),
         rulesVersion: stringOrUndefined(args.rulesVersion),
+        bazelVersion: stringOrUndefined(args.bazelVersion),
+        families: Array.isArray(args.families) ? (args.families as string[]) : undefined,
       });
       const lines = [
         `Project "${args.name}" scaffolded from template "${args.template}".`,

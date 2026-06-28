@@ -157,6 +157,35 @@ export async function swiftRun(options: {
   });
 }
 
+export async function* swiftRunStreaming(options: {
+  packagePath: string;
+  executable?: string;
+  configuration?: SwiftBuildConfiguration;
+  extraArgs?: string[];
+  runArgs?: string[];
+  timeoutSeconds?: number;
+}): AsyncGenerator<StreamChunk | CommandResult> {
+  const args = ['run'];
+  if (options.configuration) {
+    args.push('-c', options.configuration);
+  }
+  if (options.executable) {
+    args.push(options.executable);
+  }
+  if (options.extraArgs) {
+    args.push(...options.extraArgs);
+  }
+  if (options.runArgs && options.runArgs.length > 0) {
+    args.push('--', ...options.runArgs);
+  }
+
+  yield* runCommandStreaming('swift', args, {
+    cwd: assertSwiftPackage(options.packagePath),
+    timeoutSeconds: options.timeoutSeconds || 300,
+    maxOutput: 500_000,
+  });
+}
+
 export async function swiftPackageClean(options: {
   packagePath: string;
 }): Promise<CommandResult> {
@@ -190,7 +219,9 @@ export async function swiftPackageDump(options: {
   let manifest: Record<string, unknown> | undefined;
   if (command.exitCode === 0) {
     try {
-      manifest = JSON.parse(command.output) as Record<string, unknown>;
+      // dump-package writes JSON to stdout; swift may emit warnings to stderr
+      // which the combined `output` would prepend and break JSON.parse.
+      manifest = JSON.parse(command.stdout || command.output) as Record<string, unknown>;
     } catch {
       // JSON parse failed — return raw output
     }

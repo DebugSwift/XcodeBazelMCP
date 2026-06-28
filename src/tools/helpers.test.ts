@@ -7,6 +7,10 @@ import {
   nextLogCaptureId,
   nextVideoRecordingId,
   resolveSimulatorFromArgs,
+  disposeAllCaptures,
+  logCaptures,
+  videoRecordings,
+  deviceLogCaptures,
 } from './helpers.js';
 import { clearDefaults, setDefaults } from '../runtime/config.js';
 
@@ -201,5 +205,25 @@ describe('resolveSimulatorFromArgs', () => {
     await resolveSimulatorFromArgs({ simulatorName: true });
 
     expect(mockResolveSimulator).toHaveBeenCalledWith({ simulatorId: undefined, simulatorName: undefined });
+  });
+});
+
+describe('disposeAllCaptures', () => {
+  it('kills tracked log/video/device-log children and clears the maps', () => {
+    const logKill = vi.fn();
+    const videoKill = vi.fn();
+    const deviceKill = vi.fn();
+    logCaptures.set('l1', { child: { kill: logKill } as never, output: '', simulatorId: 'u' });
+    videoRecordings.set('v1', { child: { kill: videoKill } as never, outputPath: '/tmp/x.mp4', simulatorId: 'u' });
+    deviceLogCaptures.set('d1', { child: { kill: deviceKill } as never, getCaptured: () => '' });
+
+    disposeAllCaptures();
+
+    expect(logKill).toHaveBeenCalled();
+    expect(videoKill).toHaveBeenCalled();
+    expect(deviceKill).toHaveBeenCalled();
+    expect(logCaptures.size).toBe(0);
+    expect(videoRecordings.size).toBe(0);
+    expect(deviceLogCaptures.size).toBe(0);
   });
 });

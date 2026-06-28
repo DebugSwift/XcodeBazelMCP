@@ -1,7 +1,7 @@
 import type { JsonObject, ToolCallResult, ToolDefinition, BuildArgs, TestArgs, BuildPlatform, BuildMode, TargetKind } from '../../types/index.js';
 import { stringOrUndefined, numberOrUndefined } from '../helpers.js';
 import { STREAMING_PROPERTY } from '../schema-constants.js';
-import { buildCommandArgs, configArgs, discoverExpression, modeArgs, platformArgs, requireLabel, runBazel, asStringArray, testFilterArgs } from '../../core/bazel.js';
+import { buildCommandArgs, configArgs, discoverExpression, modeArgs, parseTargetLabels, platformArgs, requireLabel, runBazel, asStringArray, testFilterArgs } from '../../core/bazel.js';
 import { formatCommandResult, structuredCommandResult, toolResult, toolText } from '../../utils/output.js';
 
 export const definitions: ToolDefinition[] = [
@@ -208,6 +208,23 @@ export function canHandle(name: string): boolean {
   return HANDLED.has(name);
 }
 
+async function discoverTargets(kind: TargetKind, args: JsonObject): Promise<ToolCallResult> {
+  const expression = discoverExpression(kind, stringOrUndefined(args.scope));
+  const commandResult = await runBazel(
+    ['query', '--output=label', ...asStringArray(args.extraArgs, 'extraArgs'), expression],
+    numberOrUndefined(args.timeoutSeconds) || 600,
+    asStringArray(args.startupArgs, 'startupArgs'),
+  );
+  if (commandResult.exitCode !== 0) {
+    return toolText(formatCommandResult(commandResult), true);
+  }
+  const targets = parseTargetLabels(commandResult.output);
+  const text = targets.length
+    ? `Found ${targets.length} ${kind} target(s):\n${targets.join('\n')}`
+    : `No ${kind} targets found in scope.`;
+  return toolResult(text, { count: targets.length, kind, targets });
+}
+
 export async function handle(name: string, args: JsonObject): Promise<ToolCallResult | undefined> {
   switch (name) {
     case 'bazel_tvos_build':
@@ -280,36 +297,12 @@ export async function handle(name: string, args: JsonObject): Promise<ToolCallRe
         commandResult.exitCode !== 0,
       );
     }
-    case 'bazel_tvos_discover_targets': {
-      const kind = (args.kind as string | undefined) || 'tvos_all';
-      const expression = discoverExpression(kind as TargetKind, stringOrUndefined(args.scope));
-      const commandResult = await runBazel(
-        ['query', ...asStringArray(args.extraArgs, 'extraArgs'), expression],
-        numberOrUndefined(args.timeoutSeconds) || 600,
-        asStringArray(args.startupArgs, 'startupArgs'),
-      );
-      return toolText(formatCommandResult(commandResult), commandResult.exitCode !== 0);
-    }
-    case 'bazel_watchos_discover_targets': {
-      const kind = (args.kind as string | undefined) || 'watchos_all';
-      const expression = discoverExpression(kind as TargetKind, stringOrUndefined(args.scope));
-      const commandResult = await runBazel(
-        ['query', ...asStringArray(args.extraArgs, 'extraArgs'), expression],
-        numberOrUndefined(args.timeoutSeconds) || 600,
-        asStringArray(args.startupArgs, 'startupArgs'),
-      );
-      return toolText(formatCommandResult(commandResult), commandResult.exitCode !== 0);
-    }
-    case 'bazel_visionos_discover_targets': {
-      const kind = (args.kind as string | undefined) || 'visionos_all';
-      const expression = discoverExpression(kind as TargetKind, stringOrUndefined(args.scope));
-      const commandResult = await runBazel(
-        ['query', ...asStringArray(args.extraArgs, 'extraArgs'), expression],
-        numberOrUndefined(args.timeoutSeconds) || 600,
-        asStringArray(args.startupArgs, 'startupArgs'),
-      );
-      return toolText(formatCommandResult(commandResult), commandResult.exitCode !== 0);
-    }
+    case 'bazel_tvos_discover_targets':
+      return discoverTargets((stringOrUndefined(args.kind) as TargetKind) || 'tvos_all', args);
+    case 'bazel_watchos_discover_targets':
+      return discoverTargets((stringOrUndefined(args.kind) as TargetKind) || 'watchos_all', args);
+    case 'bazel_visionos_discover_targets':
+      return discoverTargets((stringOrUndefined(args.kind) as TargetKind) || 'visionos_all', args);
     default:
       return undefined;
   }

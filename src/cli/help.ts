@@ -16,8 +16,9 @@ Build & Run:
   xcodebazelmcp build <target> [--debug|--release] [--simulator|--device] [--stream]
   xcodebazelmcp run <target> [--debug] [--simulator-name "iPhone 16 Pro"] [--stream]
   xcodebazelmcp install <path/to/App.app> [--simulator-id <UDID>]
-  xcodebazelmcp launch <bundleId> [--simulator-id <UDID>] [--launch-arg ...]
+  xcodebazelmcp launch <bundleId> [--simulator-id <UDID>] [--simulator-name "..."] [--launch-arg ...] [--launch-env KEY=VAL]
   xcodebazelmcp stop <bundleId> [--simulator-name "..."]
+  xcodebazelmcp uninstall <bundleId> [--simulator-name "..."]
   xcodebazelmcp test <target> [--filter XCTestFilter] [--minimize-simulator] [--shutdown-simulator] [--stream]
   xcodebazelmcp coverage <target> [--filter XCTestFilter] [--minimize-simulator] [--shutdown-simulator]
   xcodebazelmcp clean [--expunge] [--stream]
@@ -32,10 +33,12 @@ Query & Inspect:
   xcodebazelmcp rdeps <target> [--scope //Apps/...]
   xcodebazelmcp bsp-status [--query-targets]
   xcodebazelmcp last-command
+  xcodebazelmcp command-log [--limit N]   Tail the persistent NDJSON command log (postmortems)
 
 Config & Defaults:
   xcodebazelmcp defaults
-  xcodebazelmcp set-defaults [--target //app:app] [--simulator-name "..."] [--build-mode debug] [--profile name] [--clear]
+  xcodebazelmcp set-defaults [--target //app:app] [--simulator-name "..."] [--simulator-id <UDID>]
+                             [--build-mode debug] [--platform simulator|device|none] [--profile name] [--clear]
   xcodebazelmcp profiles
 
 Simulator:
@@ -45,21 +48,26 @@ Simulator:
   xcodebazelmcp sim-erase --simulator-id <UDID>
   xcodebazelmcp sim-location --latitude 37.7749 --longitude -122.4194
   xcodebazelmcp sim-appearance --appearance dark
-  xcodebazelmcp sim-open [--simulator-id <UDID>]
+  xcodebazelmcp sim-open [--simulator-id <UDID>] [--simulator-name "..."]
   xcodebazelmcp screenshot <output.png> [--simulator-name "..."] [--mask alpha|black|ignored]
   xcodebazelmcp video-record <output.mp4> [--simulator-name "..."]
                               Records until Ctrl+C.
   xcodebazelmcp status-bar [--time "9:41"] [--battery-level 100] [--network wifi] [--clear]
   xcodebazelmcp ui-dump [--simulator-name "..."]
+  xcodebazelmcp add-media <path...> [--simulator-name "..."]       Add photos/videos to the photo library
+  xcodebazelmcp app-container <bundleId> [--kind app|data|groups] [--simulator-name "..."]
 
 Device:
   xcodebazelmcp devices [--all]
   xcodebazelmcp device-run <target> [--debug|--release] [--device-id <UDID>] [--device-name "..."] [--stream]
   xcodebazelmcp device-install <path/to/App.app> [--device-id <UDID>]
-  xcodebazelmcp device-launch <bundleId> [--device-id <UDID>] [--launch-arg ...]
+  xcodebazelmcp device-launch <bundleId> [--device-id <UDID>] [--launch-arg ...] [--launch-env KEY=VAL]
   xcodebazelmcp device-stop <bundleId> [--device-id <UDID>]
-  xcodebazelmcp device-test <target> [--filter ...] [--device-id <UDID>] [--stream]
+  xcodebazelmcp device-uninstall <bundleId> [--device-id <UDID>]
+  xcodebazelmcp device-list-apps [--device-id <UDID>]
+  xcodebazelmcp device-test <target> [--filter ...] [--device-id <UDID>] [--timeout <seconds>] [--stream]
   xcodebazelmcp device-screenshot <output.png> [--device-id <UDID>]
+  xcodebazelmcp device-app-path <target>                  Locate the built .app for a device target
   xcodebazelmcp device-log-start [--device-id <UDID>] [--process <name>]
   xcodebazelmcp device-log-stop <captureId>
   xcodebazelmcp device-info [--device-id <UDID>]
@@ -99,6 +107,12 @@ visionOS:
   xcodebazelmcp visionos-run <target> [--debug|--release] [--run-arg ...] [--stream]
   xcodebazelmcp visionos-test <target> [--filter XCTestFilter] [--stream]
   xcodebazelmcp visionos-discover [--scope //vision/...] [--kind visionos_apps|visionos_tests|visionos_all]
+
+Xcode Native MCP (Xcode 26.3+):
+  xcodebazelmcp xcode-mcp-status            Detect Apple's native Xcode MCP (mcpbridge), lldb-mcp, DeviceHub
+  xcodebazelmcp devicehub                   Open DeviceHub.app (Xcode-beta / Xcode 27) for device interaction
+  xcodebazelmcp xcode-export-skills [--output-dir <dir>] [--replace-existing]
+                              Export Xcode's agent SKILL.md bundles (needs a running Xcode)
 
 Daemon:
   xcodebazelmcp daemon [--workspace <path>]  Start the background daemon (foreground, Ctrl+C to stop)

@@ -26,8 +26,25 @@ export async function minimizeSimulatorWindows(): Promise<CommandResult> {
 }
 
 export function startMinimizeSimulatorPoller(intervalMs = 2_000): () => void {
+  let consecutiveFailures = 0;
+  let hintShown = false;
   const timer = setInterval(() => {
-    void minimizeSimulatorWindows();
+    void minimizeSimulatorWindows().then((result) => {
+      if (result.exitCode === 0) {
+        consecutiveFailures = 0;
+        return;
+      }
+      consecutiveFailures += 1;
+      if (!hintShown && /not authoriz|-1743|assistive|accessibility/i.test(result.output)) {
+        hintShown = true;
+        console.error(
+          'Note: minimizing Simulator windows needs Automation/Accessibility permission ' +
+          '(System Settings → Privacy & Security → Automation). Continuing without minimize.',
+        );
+      }
+      // Stop hammering osascript if Simulator isn't scriptable (e.g. not running).
+      if (consecutiveFailures >= 3) clearInterval(timer);
+    });
   }, intervalMs);
   return () => clearInterval(timer);
 }
@@ -46,8 +63,10 @@ export async function cleanupSimulatorsAfterTest(
   const deleted: string[] = [];
 
   for (const device of devices) {
-    const openedForTest =
-      !bootedBefore.has(device.udid) || device.name.startsWith(BAZEL_TEST_SIMULATOR_PREFIX);
+    // Only touch simulators that were not already booted when the test started
+    // (i.e. ones the test itself opened). A sim the user had running before —
+    // even a leftover BAZEL_TEST_* one — is left alone.
+    const openedForTest = !bootedBefore.has(device.udid);
     if (!openedForTest) continue;
 
     await shutdownSimulator(device.udid);

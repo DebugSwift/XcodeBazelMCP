@@ -17,7 +17,7 @@ import {
 } from './cli/parsers.js';
 import {
   printTool, runSkillInit, runUpgrade, runDaemon,
-  runVideoRecord, runLogStream, runSetupWizard,
+  runVideoRecord, runLogStream, runSetupWizard, runCheckUpdate,
 } from './cli/commands.js';
 import { printHelp } from './cli/help.js';
 
@@ -25,6 +25,17 @@ const argv = process.argv.slice(2);
 const command = argv[0] || 'help';
 
 switch (command) {
+  case '-h':
+  case '--help':
+    printHelp();
+    break;
+  case 'version':
+  case '--version':
+  case '-v': {
+    const { getCurrentVersion } = await import('./core/upgrade.js');
+    console.log(getCurrentVersion());
+    break;
+  }
   case 'mcp':
     await startMcpServer();
     break;
@@ -111,8 +122,28 @@ switch (command) {
   case 'last-command':
     await printTool('bazel_ios_last_command', {});
     break;
+  case 'command-log': {
+    const { readRecentCommands, commandLogPath } = await import('./core/command-log.js');
+    const limitIdx = argv.indexOf('--limit');
+    const limit = limitIdx >= 0 ? Number(argv[limitIdx + 1]) || 20 : 20;
+    const entries = readRecentCommands(limit);
+    if (entries.length === 0) {
+      console.log(`No commands logged yet. Log file: ${commandLogPath()}`);
+    } else {
+      console.log(`Recent commands (${entries.length}) — ${commandLogPath()}\n`);
+      for (const e of entries) {
+        const when = new Date(e.timestamp).toISOString();
+        const status = e.exitCode === 0 ? 'OK' : `FAIL(${e.failureKind || e.exitCode})`;
+        console.log(`${when}  [${e.id || '--------'}]  ${status}  ${(e.durationMs / 1000).toFixed(1)}s  ${e.argv.join(' ')}`);
+      }
+    }
+    break;
+  }
   case 'stop':
     await printTool('bazel_ios_stop_app', parseStopApp(argv.slice(1)));
+    break;
+  case 'uninstall':
+    await printTool('bazel_ios_uninstall_app', parseStopApp(argv.slice(1)));
     break;
   case 'app-path':
     await printTool('bazel_ios_get_app_path', parseTargetInfo(argv.slice(1)));
@@ -145,6 +176,18 @@ switch (command) {
     break;
   case 'ui-dump':
     await printTool('bazel_ios_ui_dump', parseSimSelector(argv.slice(1)));
+    break;
+  case 'add-media': {
+    const mediaPaths = argv.slice(1).filter((a) => !a.startsWith('--'));
+    await printTool('bazel_ios_add_media', { paths: mediaPaths, ...parseSimSelector(argv.slice(1)) });
+    break;
+  }
+  case 'app-container':
+    await printTool('bazel_ios_get_app_container', {
+      bundleId: argv[1],
+      kind: argv.includes('--kind') ? argv[argv.indexOf('--kind') + 1] : undefined,
+      ...parseSimSelector(argv.slice(2)),
+    });
     break;
   case 'tap':
     await printTool('bazel_ios_tap', { x: Number(argv[1]), y: Number(argv[2]), ...parseSimSelector(argv.slice(3)) });
@@ -190,11 +233,20 @@ switch (command) {
   case 'device-stop':
     await printTool('bazel_ios_device_stop_app', parseDeviceStop(argv.slice(1)));
     break;
+  case 'device-uninstall':
+    await printTool('bazel_ios_device_uninstall_app', parseDeviceStop(argv.slice(1)));
+    break;
+  case 'device-list-apps':
+    await printTool('bazel_ios_device_list_apps', parseDeviceSelector(argv.slice(1)));
+    break;
   case 'device-test':
     await printTool('bazel_ios_device_test', parseDeviceTest(argv.slice(1)));
     break;
   case 'device-screenshot':
     await printTool('bazel_ios_device_screenshot', parseDeviceScreenshot(argv.slice(1)));
+    break;
+  case 'device-app-path':
+    await printTool('bazel_ios_device_get_app_path', parseTargetInfo(argv.slice(1)));
     break;
   case 'device-log-start':
     await printTool('bazel_ios_device_log_start', parseDeviceSelector(argv.slice(1)));
@@ -380,13 +432,26 @@ switch (command) {
     await runUpgrade(argv.slice(1));
     break;
   case 'check-update':
-    await printTool('bazel_check_update', {});
+    await runCheckUpdate(argv.includes('--exit-code'));
     break;
   case 'workflows':
     await printTool('bazel_list_workflows', {});
     break;
   case 'toggle-workflow':
     await printTool('bazel_toggle_workflow', { id: argv[1], enabled: argv[2] !== 'off' && argv[2] !== 'false' && argv[2] !== 'disable' });
+    break;
+  case 'xcode-mcp-status':
+    await printTool('bazel_xcode_native_mcp_status', {});
+    break;
+  case 'devicehub':
+  case 'device-hub':
+    await printTool('bazel_xcode_open_device_hub', {});
+    break;
+  case 'xcode-export-skills':
+    await printTool('bazel_xcode_export_skills', {
+      outputDir: argv.includes('--output-dir') ? argv[argv.indexOf('--output-dir') + 1] : undefined,
+      replaceExisting: argv.includes('--replace-existing'),
+    });
     break;
   case 'setup':
     await runSetupWizard();

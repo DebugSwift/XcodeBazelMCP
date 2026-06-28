@@ -1,5 +1,11 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
+
+/** Default toolchain/dependency pins for generated projects (centralized so they're easy to bump). */
+const DEFAULT_BAZEL_VERSION = '7.6.1';
+const DEFAULT_RULES_APPLE_VERSION = '3.16.1';
+const RULES_SWIFT_VERSION = '2.6.0';
+const APPLE_SUPPORT_VERSION = '1.21.1';
 
 export type ScaffoldTemplate =
   | 'ios_app'
@@ -16,6 +22,9 @@ export interface ScaffoldOptions {
   bundleId?: string;
   minimumOs?: string;
   rulesVersion?: string;
+  bazelVersion?: string;
+  /** iOS device families for ios_application (default: iphone + ipad). */
+  families?: string[];
 }
 
 export interface ScaffoldResult {
@@ -42,8 +51,31 @@ export function scaffold(options: ScaffoldOptions): ScaffoldResult {
     throw new Error(`Invalid project name "${name}". Use alphanumeric characters, hyphens, and underscores only.`);
   }
 
+  const validTemplates = getAvailableTemplates().map((t) => t.id);
+  if (!validTemplates.includes(template)) {
+    throw new Error(`Unknown template "${template}". Available: ${validTemplates.join(', ')}`);
+  }
+
   const bundleId = options.bundleId || `com.example.${name}`;
+  if (!/^[A-Za-z0-9.-]+$/.test(bundleId)) {
+    throw new Error(`Invalid bundleId "${bundleId}". Use reverse-DNS style: letters, numbers, dots, and hyphens only.`);
+  }
   const minimumOs = options.minimumOs || (template.startsWith('macos') ? '14.0' : '17.0');
+  if (!/^\d+(\.\d+){0,2}$/.test(minimumOs)) {
+    throw new Error(`Invalid minimumOs "${minimumOs}". Use a version like 17.0.`);
+  }
+  if (options.rulesVersion !== undefined && !/^\d+(\.\d+){0,2}$/.test(options.rulesVersion)) {
+    throw new Error(`Invalid rulesVersion "${options.rulesVersion}". Use a version like 3.16.1.`);
+  }
+  const bazelVersion = options.bazelVersion || DEFAULT_BAZEL_VERSION;
+  if (!/^\d+(\.\d+){0,2}$/.test(bazelVersion)) {
+    throw new Error(`Invalid bazelVersion "${bazelVersion}". Use a version like 7.6.1.`);
+  }
+  const families = options.families && options.families.length > 0 ? options.families : ['iphone', 'ipad'];
+  const validFamilies = ['iphone', 'ipad'];
+  for (const f of families) {
+    if (!validFamilies.includes(f)) throw new Error(`Invalid family "${f}". Allowed: ${validFamilies.join(', ')}.`);
+  }
 
   if (existsSync(join(outputPath, 'MODULE.bazel')) || existsSync(join(outputPath, 'WORKSPACE'))) {
     throw new Error(`A Bazel workspace already exists in ${outputPath}. Aborting to avoid overwriting.`);
@@ -64,22 +96,22 @@ export function scaffold(options: ScaffoldOptions): ScaffoldResult {
     mkdirSync(outputPath, { recursive: true });
   }
 
-  const rulesAppleVersion = options.rulesVersion || '3.16.1';
+  const rulesAppleVersion = options.rulesVersion || DEFAULT_RULES_APPLE_VERSION;
 
   write('MODULE.bazel', moduleBazel(name, rulesAppleVersion));
   write('.bazelrc', bazelrc(template));
-  write('.bazelversion', '7.6.1\n');
+  write('.bazelversion', `${bazelVersion}\n`);
   write('.gitignore', bazelGitignore());
 
   switch (template) {
     case 'ios_app':
-      writeIosApp(write, name, bundleId, minimumOs);
+      writeIosApp(write, name, bundleId, minimumOs, families);
       break;
     case 'ios_test':
       writeIosTest(write, name, minimumOs);
       break;
     case 'ios_app_with_tests':
-      writeIosApp(write, name, bundleId, minimumOs);
+      writeIosApp(write, name, bundleId, minimumOs, families);
       writeIosAppTest(write, name, minimumOs);
       break;
     case 'macos_app':
@@ -94,7 +126,9 @@ export function scaffold(options: ScaffoldOptions): ScaffoldResult {
       break;
   }
 
-  write('.xcodebazelmcp/config.yaml', `workspacePath: .\nbazelPath: bazel\n`);
+  // Absolute path so the config resolves correctly regardless of the cwd the
+  // server/CLI is later launched from.
+  write('.xcodebazelmcp/config.yaml', `workspacePath: ${resolve(outputPath)}\nbazelPath: bazel\n`);
 
   return { filesCreated, outputPath, template };
 }
@@ -109,8 +143,8 @@ function moduleBazel(name: string, rulesAppleVersion: string): string {
   if (needsAppleRules) {
     lines.push(
       `bazel_dep(name = "rules_apple", version = "${rulesAppleVersion}")`,
-      `bazel_dep(name = "rules_swift", version = "2.6.0")`,
-      `bazel_dep(name = "apple_support", version = "1.21.1")`,
+      `bazel_dep(name = "rules_swift", version = "${RULES_SWIFT_VERSION}")`,
+      `bazel_dep(name = "apple_support", version = "${APPLE_SUPPORT_VERSION}")`,
       '',
     );
   }
@@ -144,6 +178,10 @@ function bazelrc(template: ScaffoldTemplate): string {
     'build:debug --compilation_mode=dbg',
     'build:release --compilation_mode=opt --strip=always',
     '',
+    '# Caching (uncomment and configure to speed up rebuilds)',
+    '# build --disk_cache=~/.cache/bazel-disk',
+    '# build --remote_cache=grpc://your-cache:9092',
+    '',
   );
 
   return lines.join('\n');
@@ -162,7 +200,8 @@ function bazelGitignore(): string {
 
 type WriteFunc = (relPath: string, content: string) => void;
 
-function writeIosApp(write: WriteFunc, name: string, bundleId: string, minimumOs: string): void {
+function writeIosApp(write: WriteFunc, name: string, bundleId: string, minimumOs: string, families: string[]): void {
+  const familiesLiteral = families.map((f) => `"${f}"`).join(', ');
   write(`${name}/BUILD.bazel`, `load("@rules_apple//apple:ios.bzl", "ios_application")
 load("@rules_swift//swift:swift.bzl", "swift_library")
 
@@ -176,14 +215,14 @@ swift_library(
 ios_application(
     name = "${name}",
     bundle_id = "${bundleId}",
-    families = ["iphone", "ipad"],
+    families = [${familiesLiteral}],
     infoplists = ["Info.plist"],
     minimum_os_version = "${minimumOs}",
     deps = [":${name}Lib"],
 )
 `);
 
-  write(`${name}/Info.plist`, infoPlist(name, bundleId));
+  write(`${name}/Info.plist`, infoPlist(name, bundleId, true));
 
   write(`${name}/Sources/${name}App.swift`, `import SwiftUI
 
@@ -295,7 +334,7 @@ macos_application(
 )
 `);
 
-  write(`${name}/Info.plist`, infoPlist(name, bundleId));
+  write(`${name}/Info.plist`, infoPlist(name, bundleId, false));
 
   write(`${name}/Sources/${name}App.swift`, `import SwiftUI
 
@@ -387,7 +426,16 @@ final class ${testName}: XCTestCase {
 `);
 }
 
-function infoPlist(name: string, bundleId: string): string {
+function infoPlist(name: string, bundleId: string, isIos: boolean): string {
+  // iOS apps need LSRequiresIPhoneOS and a launch-screen key or the app warns /
+  // is rejected; macOS apps don't.
+  const iosKeys = isIos
+    ? `    <key>LSRequiresIPhoneOS</key>
+    <true/>
+    <key>UILaunchScreen</key>
+    <dict/>
+`
+    : '';
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -402,7 +450,7 @@ function infoPlist(name: string, bundleId: string): string {
     <string>1.0</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
-</dict>
+${iosKeys}</dict>
 </plist>
 `;
 }

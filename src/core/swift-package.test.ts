@@ -340,6 +340,20 @@ describe('swiftPackageDump', () => {
     expect(result.manifest).toEqual({ name: 'MyPackage', platforms: [] });
   });
 
+  it('parses stdout JSON even when stderr warnings land in combined output (regression)', async () => {
+    const manifestJson = JSON.stringify({ name: 'MyPackage', platforms: [] });
+    // `swift` may emit warnings to stderr which the combined `output` prepends.
+    mockRunCommand.mockResolvedValue({
+      ...mockSuccess,
+      stdout: manifestJson,
+      output: `warning: 'foo' is deprecated\n${manifestJson}`,
+    });
+
+    const result = await swiftPackageDump({ packagePath: tempDir });
+
+    expect(result.manifest).toEqual({ name: 'MyPackage', platforms: [] });
+  });
+
   it('returns undefined manifest on parse error', async () => {
     mockRunCommand.mockResolvedValue({ ...mockSuccess, output: 'not json' });
 

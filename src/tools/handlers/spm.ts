@@ -51,6 +51,7 @@ export const definitions: ToolDefinition[] = [
         extraArgs: { type: 'array', items: { type: 'string' }, description: 'Additional arguments passed to swift run.' },
         runArgs: { type: 'array', items: { type: 'string' }, description: 'Arguments passed to the executable after --.' },
         timeoutSeconds: { type: 'number' },
+        streaming: STREAMING_PROPERTY,
       },
     },
   },
@@ -195,7 +196,11 @@ export async function handle(name: string, args: JsonObject): Promise<ToolCallRe
     case 'swift_package_init': {
       const pkgPath = stringOrUndefined(args.packagePath) || getConfig().workspacePath;
       const initArgs = ['package', 'init'];
+      const validInitTypes = ['library', 'executable', 'tool', 'macro', 'empty'];
       if (typeof args.type === 'string') {
+        if (!validInitTypes.includes(args.type)) {
+          throw new Error(`Invalid package type "${args.type}". Expected one of: ${validInitTypes.join(', ')}.`);
+        }
         initArgs.push('--type', args.type);
       }
       if (typeof args.name === 'string') {
