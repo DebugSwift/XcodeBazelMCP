@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { StringDecoder } from 'node:string_decoder';
 import type { CommandResult, FailureKind } from '../types/index.js';
+import { augmentPathForToolchain } from '../runtime/resolve-toolchain.js';
 
 export interface RunCommandOptions {
   cwd: string;
@@ -84,7 +85,7 @@ export function runCommand(
   return new Promise((resolve) => {
     const child = spawn(command, args, {
       cwd: options.cwd,
-      env: options.env || process.env,
+      env: augmentPathForToolchain(options.env || process.env),
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 
@@ -167,7 +168,7 @@ export async function* runCommandStreaming(
 
   const child = spawn(command, args, {
     cwd: options.cwd,
-    env: options.env || process.env,
+    env: augmentPathForToolchain(options.env || process.env),
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 

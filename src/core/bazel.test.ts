@@ -40,6 +40,8 @@ vi.mock('../utils/process.js', () => ({
 
 vi.mock('./workspace.js', () => ({
   assertBazelWorkspace: vi.fn(),
+  isBazelWorkspace: vi.fn(() => true),
+  discoverBazelWorkspace: vi.fn(),
 }));
 
 const mockRunCommand = vi.mocked(runCommand);
@@ -540,7 +542,7 @@ describe('runBazel', () => {
 
     await runBazel(['build', '//:MyApp']);
 
-    expect(mockRunCommand).toHaveBeenCalledWith('bazel', ['build', '//:MyApp'], {
+    expect(mockRunCommand).toHaveBeenCalledWith(expect.stringMatching(/bazel(isk)?$/), ['build', '//:MyApp'], {
       cwd: tempDir,
       timeoutSeconds: undefined,
       maxOutput: expect.any(Number),
@@ -553,7 +555,7 @@ describe('runBazel', () => {
 
     await runBazel(['build', '//:MyApp'], undefined, ['--host_jvm_args=-Xmx4g']);
 
-    expect(mockRunCommand).toHaveBeenCalledWith('bazel', ['--host_jvm_args=-Xmx4g', 'build', '//:MyApp'], expect.any(Object));
+    expect(mockRunCommand).toHaveBeenCalledWith(expect.stringMatching(/bazel(isk)?$/), ['--host_jvm_args=-Xmx4g', 'build', '//:MyApp'], expect.any(Object));
   });
 
   it('passes timeout', async () => {
@@ -561,7 +563,7 @@ describe('runBazel', () => {
 
     await runBazel(['build', '//:MyApp'], 300);
 
-    expect(mockRunCommand).toHaveBeenCalledWith('bazel', ['build', '//:MyApp'], expect.objectContaining({ timeoutSeconds: 300 }));
+    expect(mockRunCommand).toHaveBeenCalledWith(expect.stringMatching(/bazel(isk)?$/), ['build', '//:MyApp'], expect.objectContaining({ timeoutSeconds: 300 }));
   });
 
   it('respects BAZEL_IOS_STARTUP_ARGS env var', async () => {
@@ -570,7 +572,7 @@ describe('runBazel', () => {
 
     await runBazel(['build', '//:MyApp']);
 
-    expect(mockRunCommand).toHaveBeenCalledWith('bazel', ['--batch', '--noautodetect_server_javabase', 'build', '//:MyApp'], expect.any(Object));
+    expect(mockRunCommand).toHaveBeenCalledWith(expect.stringMatching(/bazel(isk)?$/), ['--batch', '--noautodetect_server_javabase', 'build', '//:MyApp'], expect.any(Object));
 
     delete process.env.BAZEL_IOS_STARTUP_ARGS;
   });
@@ -598,7 +600,7 @@ describe('runBazelStreaming', () => {
       chunks.push(chunk);
     }
 
-    expect(mockRunCommandStreaming).toHaveBeenCalledWith('bazel', ['build', '//:MyApp'], {
+    expect(mockRunCommandStreaming).toHaveBeenCalledWith(expect.stringMatching(/bazel(isk)?$/), ['build', '//:MyApp'], {
       cwd: tempDir,
       timeoutSeconds: undefined,
       maxOutput: expect.any(Number),
@@ -617,7 +619,7 @@ describe('runBazelStreaming', () => {
       chunks.push(chunk);
     }
 
-    expect(mockRunCommandStreaming).toHaveBeenCalledWith('bazel', ['--batch', 'test', '//:Tests'], expect.any(Object));
+    expect(mockRunCommandStreaming).toHaveBeenCalledWith(expect.stringMatching(/bazel(isk)?$/), ['--batch', 'test', '//:Tests'], expect.any(Object));
   });
 
   it('stores final result in lastCommand', async () => {
