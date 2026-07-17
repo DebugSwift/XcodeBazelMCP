@@ -186,8 +186,54 @@ export function testFilterArgs(testFilter: unknown): string[] {
   return [`--test_filter=${trimmed}`];
 }
 
+/** Bazel configs that require `BITRISE_BUILD_CACHE_AUTH_TOKEN` (DoorDash ios `.bazelrc`). */
+export const BITRISE_AUTH_CONFIGS = ['bitrise', 'remote_linux'] as const;
+
+export type BitriseAuthConfig = (typeof BITRISE_AUTH_CONFIGS)[number];
+
+export function bitriseAuthAvailable(): boolean {
+  return Boolean(process.env.BITRISE_BUILD_CACHE_AUTH_TOKEN?.trim());
+}
+
+function isBitriseAuthConfig(name: string): name is BitriseAuthConfig {
+  return (BITRISE_AUTH_CONFIGS as readonly string[]).includes(name);
+}
+
+/** Drop Bitrise RBE configs from a `configs` array when the auth token is missing. */
+export function withoutBitriseAuthConfigs(configs: string[]): string[] {
+  if (bitriseAuthAvailable()) return configs;
+  return configs.filter((config) => !isBitriseAuthConfig(config));
+}
+
+/**
+ * Remove `--config=bitrise` / `--config=remote_linux` from a Bazel argv when
+ * `BITRISE_BUILD_CACHE_AUTH_TOKEN` is unset so local builds/tests still run.
+ */
+export function stripBitriseAuthFlags(args: string[]): string[] {
+  if (bitriseAuthAvailable()) return args;
+
+  const stripped: string[] = [];
+  const kept = args.filter((arg) => {
+    const match = /^--config=(.+)$/.exec(arg);
+    if (match && isBitriseAuthConfig(match[1])) {
+      stripped.push(arg);
+      return false;
+    }
+    return true;
+  });
+
+  if (stripped.length > 0) {
+    process.stderr.write(
+      `[XcodeBazelMCP] Skipping Bitrise RBE config(s) ${stripped.join(', ')} — `
+        + 'BITRISE_BUILD_CACHE_AUTH_TOKEN is not set; using local execution.\n',
+    );
+  }
+
+  return kept;
+}
+
 export function configArgs(value: unknown): string[] {
-  return asStringArray(value, 'configs').map((config) => {
+  return withoutBitriseAuthConfigs(asStringArray(value, 'configs')).map((config) => {
     if (!/^[A-Za-z0-9_.-]+$/.test(config)) {
       throw new Error(`Invalid config value: ${config}`);
     }
@@ -269,7 +315,8 @@ export async function runBazel(
   assertBazelWorkspace(config.workspacePath);
   const { all: allStartupArgs } = resolveStartupArgs(startupArgs);
   const id = randomUUID().slice(0, 8);
-  const result = await runCommand(config.bazelPath, [...allStartupArgs, ...args], {
+  const sanitizedArgs = stripBitriseAuthFlags(args);
+  const result = await runCommand(config.bazelPath, [...allStartupArgs, ...sanitizedArgs], {
     cwd: config.workspacePath,
     timeoutSeconds,
     maxOutput: config.maxOutput,
@@ -293,9 +340,10 @@ export async function* runBazelStreaming(
   const { all: allStartupArgs } = resolveStartupArgs(startupArgs);
   const id = randomUUID().slice(0, 8);
 
+  const sanitizedArgs = stripBitriseAuthFlags(args);
   for await (const chunk of runCommandStreaming(
     config.bazelPath,
-    [...allStartupArgs, ...args],
+    [...allStartupArgs, ...sanitizedArgs],
     {
       cwd: config.workspacePath,
       timeoutSeconds,
@@ -325,7 +373,7 @@ export function buildCommandArgs(args: BuildArgs): string[] {
     ...platformArgs(args.platform),
     ...(isDevice ? [] : simulatorArgs(args)),
     ...configArgs(args.configs),
-    ...asStringArray(args.extraArgs, 'extraArgs'),
+    ...stripBitriseAuthFlags(asStringArray(args.extraArgs, 'extraArgs')),
     target,
   ];
 }

@@ -6,6 +6,7 @@ import type { CommandResult } from '../types/index.js';
 import { runCommand, runCommandStreaming } from '../utils/process.js';
 import {
   asStringArray,
+  bitriseAuthAvailable,
   buildCommandArgs,
   configArgs,
   discoverExpression,
@@ -18,8 +19,10 @@ import {
   requireLabel,
   sanitizeQueryExpression,
   simulatorArgs,
+  stripBitriseAuthFlags,
   testFilterArgs,
   tokenizeArgs,
+  withoutBitriseAuthConfigs,
   runBazel,
   runBazelStreaming,
   getLastCommand,
@@ -228,6 +231,32 @@ describe('Bazel argument helpers', () => {
 
     expect(configArgs(['test', 'debug.local'])).toEqual(['--config=test', '--config=debug.local']);
     expect(() => configArgs(['bad;config'])).toThrow('Invalid config value');
+  });
+
+  it('drops Bitrise RBE configs when BITRISE_BUILD_CACHE_AUTH_TOKEN is unset', () => {
+    delete process.env.BITRISE_BUILD_CACHE_AUTH_TOKEN;
+    expect(bitriseAuthAvailable()).toBe(false);
+    expect(withoutBitriseAuthConfigs(['local', 'bitrise', 'remote_linux', 'test'])).toEqual(['local', 'test']);
+    expect(configArgs(['bitrise', 'test'])).toEqual(['--config=test']);
+    expect(stripBitriseAuthFlags(['test', '--config=bitrise', '--jobs=1', '--config=remote_linux'])).toEqual([
+      'test',
+      '--jobs=1',
+    ]);
+    expect(
+      buildCommandArgs({
+        target: '//:MyApp',
+        configs: ['bitrise'],
+        extraArgs: ['--config=remote_linux', '--cache_test_results=no'],
+      }),
+    ).toEqual(['build', '--cache_test_results=no', '//:MyApp']);
+  });
+
+  it('keeps Bitrise RBE configs when BITRISE_BUILD_CACHE_AUTH_TOKEN is set', () => {
+    process.env.BITRISE_BUILD_CACHE_AUTH_TOKEN = 'test-token';
+    expect(bitriseAuthAvailable()).toBe(true);
+    expect(configArgs(['bitrise', 'test'])).toEqual(['--config=bitrise', '--config=test']);
+    expect(stripBitriseAuthFlags(['--config=bitrise'])).toEqual(['--config=bitrise']);
+    delete process.env.BITRISE_BUILD_CACHE_AUTH_TOKEN;
   });
 
   it('testFilterArgs returns single --test_filter for simple string', () => {
