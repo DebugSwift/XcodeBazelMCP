@@ -24,6 +24,7 @@ The package is **not published to npm** (`private: true`). Use the local `dist/c
 
 - After source changes, run `npm run build` to update `dist/`.
 - Prefer absolute paths — `~` may not expand in all MCP clients.
+- **Local Bazel execution is the default.** `BITRISE_BUILD_CACHE_AUTH_TOKEN` is not required. Bitrise RBE configs (`bitrise`, `remote_linux`) are stripped automatically unless the token is set.
 
 ## Config File
 

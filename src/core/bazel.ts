@@ -224,8 +224,8 @@ export function stripBitriseAuthFlags(args: string[]): string[] {
 
   if (stripped.length > 0) {
     process.stderr.write(
-      `[XcodeBazelMCP] Skipping Bitrise RBE config(s) ${stripped.join(', ')} — `
-        + 'BITRISE_BUILD_CACHE_AUTH_TOKEN is not set; using local execution.\n',
+      `[XcodeBazelMCP] Dropping Bitrise RBE config(s) ${stripped.join(', ')} — `
+        + 'local execution is the default (set BITRISE_BUILD_CACHE_AUTH_TOKEN only for RBE offload).\n',
     );
   }
 

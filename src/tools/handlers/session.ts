@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { DEFAULT_WORKFLOWS, WORKFLOWS, getEnabledToolNames, validateWorkflowIds } from '../../core/workflows.js';
-import { asStringArray, getLastCommand, runBazel } from '../../core/bazel.js';
+import { asStringArray, bitriseAuthAvailable, getLastCommand, runBazel } from '../../core/bazel.js';
 import { assertBazelWorkspace, readBspStatus } from '../../core/workspace.js';
 import {
   activateProfile,
@@ -155,6 +155,7 @@ export async function handle(name: string, args: JsonObject): Promise<ToolCallRe
         `  config: ${config.configFilePath || '(none)'}`,
         `  maxOutput: ${config.maxOutput}`,
         `  startupArgs: ${process.env.BAZEL_IOS_STARTUP_ARGS || '(none)'}`,
+        `  execution: ${bitriseAuthAvailable() ? 'Bitrise RBE (BITRISE_BUILD_CACHE_AUTH_TOKEN set)' : 'local (default — no Bitrise token required)'}`,
         `  BAZEL_IOS_WORKSPACE: ${process.env.BAZEL_IOS_WORKSPACE || '(not set)'}`,
         `  MODULE.bazel: ${hasModuleBazel ? '✅ found' : '❌ missing'}`,
         `  WORKSPACE: ${hasWorkspace ? '✅ found' : '⚠️ missing (using MODULE.bazel)'}`,
