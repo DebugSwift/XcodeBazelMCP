@@ -1,13 +1,46 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+
+const WORKSPACE_MARKERS = ['MODULE.bazel', 'WORKSPACE', 'WORKSPACE.bazel'] as const;
+
+export function isBazelWorkspace(workspacePath: string): boolean {
+  if (!existsSync(workspacePath) || !statSync(workspacePath).isDirectory()) {
+    return false;
+  }
+  return WORKSPACE_MARKERS.some((marker) => existsSync(join(workspacePath, marker)));
+}
+
+/**
+ * Walk upward from each start directory and return the first Bazel workspace root.
+ */
+export function discoverBazelWorkspace(startDirs: string[]): string | undefined {
+  const seen = new Set<string>();
+
+  for (const start of startDirs) {
+    if (!start?.trim()) continue;
+    let dir = resolve(start.trim());
+
+    for (let depth = 0; depth < 64; depth += 1) {
+      if (seen.has(dir)) break;
+      seen.add(dir);
+
+      if (isBazelWorkspace(dir)) return dir;
+
+      const parent = dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
+    }
+  }
+
+  return undefined;
+}
 
 export function assertBazelWorkspace(workspacePath: string): void {
   if (!existsSync(workspacePath) || !statSync(workspacePath).isDirectory()) {
     throw new Error(`Workspace does not exist or is not a directory: ${workspacePath}`);
   }
 
-  const markers = ['MODULE.bazel', 'WORKSPACE', 'WORKSPACE.bazel'];
-  if (!markers.some((marker) => existsSync(join(workspacePath, marker)))) {
+  if (!isBazelWorkspace(workspacePath)) {
     throw new Error(`Workspace has no MODULE.bazel, WORKSPACE, or WORKSPACE.bazel: ${workspacePath}`);
   }
 }

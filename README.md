@@ -183,6 +183,13 @@ Then switch at runtime: `xcodebazelmcp set-defaults --profile app`
 | `BAZEL_IOS_COMMAND_LOG_MAX_BYTES` | Rotate the command log past this size (default 5 MiB).               |
 | `BAZEL_IOS_COMMAND_LOG_DISABLE`| Set to `1` to disable command logging.                                  |
 | `IDB_PATH`                     | Path to the `idb` binary for UI automation (else discovered on `PATH`). |
+| `BITRISE_BUILD_CACHE_AUTH_TOKEN` | **Not required.** Local builds/tests are the default. Set this only when you intentionally want Bitrise RBE (`--config=bitrise` / `--config=remote_linux`). Without it, those configs are dropped automatically. |
+
+### Local execution is the default
+
+DoorDash's `ios` repo defines `--config=bitrise` and `--config=remote_linux` for optional Bitrise remote execution. **You do not need `BITRISE_BUILD_CACHE_AUTH_TOKEN` for XcodeBazelMCP.** Agents and tools run locally on your Mac by default.
+
+If a call passes `--config=bitrise` or `--config=remote_linux` without the token, XcodeBazelMCP silently drops those flags and runs locally. Set the token only when you explicitly want RBE offload (e.g. heavy compiles on Bitrise executors).
 
 ## CLI Examples
 

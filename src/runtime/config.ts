@@ -2,6 +2,8 @@ import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import type { FileConfig, ProfileConfig, RuntimeConfig, SessionDefaults } from '../types/index.js';
+import { discoverBazelWorkspace, isBazelWorkspace } from '../core/workspace.js';
+import { resolveBazelExecutable } from './resolve-toolchain.js';
 
 /** Expand a leading `~` or `~/` to the user's home directory before resolving. */
 export function expandTilde(p: string): string {
@@ -30,12 +32,40 @@ let config: RuntimeConfig = {
 };
 
 let configLoaded = false;
+let workspaceExplicitlySet = false;
+
+function workspaceDiscoveryCandidates(): string[] {
+  return [
+    process.env.BAZEL_IOS_WORKSPACE,
+    config.workspacePath,
+    process.env.CURSOR_WORKSPACE_FOLDER,
+    process.env.WORKSPACE_FOLDER,
+    process.env.VSCODE_CWD,
+    process.cwd(),
+  ].filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+    .map((value) => resolvePath(value.trim()));
+}
+
+function resolveRuntimePaths(): void {
+  if (!workspaceExplicitlySet && !isBazelWorkspace(config.workspacePath)) {
+    const discovered = discoverBazelWorkspace(workspaceDiscoveryCandidates());
+    if (discovered) {
+      config.workspacePath = discovered;
+      config.workspaceAutoDiscovered = true;
+    }
+  } else if (isBazelWorkspace(config.workspacePath)) {
+    config.workspaceAutoDiscovered = false;
+  }
+
+  config.bazelPath = resolveBazelExecutable(config.bazelPath);
+}
 
 export function getConfig(): RuntimeConfig {
   if (!configLoaded) {
     loadConfigFile();
     configLoaded = true;
   }
+  resolveRuntimePaths();
   const clonedProfiles: Record<string, ProfileConfig> = {};
   for (const [k, v] of Object.entries(config.profiles)) {
     clonedProfiles[k] = { ...v };
@@ -44,10 +74,12 @@ export function getConfig(): RuntimeConfig {
 }
 
 export function setWorkspace(workspacePath: string, bazelPath?: string): RuntimeConfig {
+  workspaceExplicitlySet = true;
   config = {
     ...config,
     workspacePath: resolvePath(workspacePath),
     bazelPath: bazelPath ? expandTilde(bazelPath) : config.bazelPath,
+    workspaceAutoDiscovered: false,
   };
   configLoaded = false;
   return getConfig();

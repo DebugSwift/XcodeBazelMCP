@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { DEFAULT_WORKFLOWS, WORKFLOWS, getEnabledToolNames, validateWorkflowIds } from '../../core/workflows.js';
-import { asStringArray, getLastCommand, runBazel } from '../../core/bazel.js';
+import { asStringArray, bitriseAuthAvailable, getLastCommand, runBazel } from '../../core/bazel.js';
 import { assertBazelWorkspace, readBspStatus } from '../../core/workspace.js';
 import {
   activateProfile,
@@ -151,9 +151,11 @@ export async function handle(name: string, args: JsonObject): Promise<ToolCallRe
         'Workspace',
         `  path: ${config.workspacePath}`,
         `  bazel: ${config.bazelPath}`,
+        `  workspaceAutoDiscovered: ${config.workspaceAutoDiscovered ? 'yes' : 'no'}`,
         `  config: ${config.configFilePath || '(none)'}`,
         `  maxOutput: ${config.maxOutput}`,
         `  startupArgs: ${process.env.BAZEL_IOS_STARTUP_ARGS || '(none)'}`,
+        `  execution: ${bitriseAuthAvailable() ? 'Bitrise RBE (BITRISE_BUILD_CACHE_AUTH_TOKEN set)' : 'local (default — no Bitrise token required)'}`,
         `  BAZEL_IOS_WORKSPACE: ${process.env.BAZEL_IOS_WORKSPACE || '(not set)'}`,
         `  MODULE.bazel: ${hasModuleBazel ? '✅ found' : '❌ missing'}`,
         `  WORKSPACE: ${hasWorkspace ? '✅ found' : '⚠️ missing (using MODULE.bazel)'}`,
@@ -163,7 +165,12 @@ export async function handle(name: string, args: JsonObject): Promise<ToolCallRe
       if (usingCwdFallback && !hasModuleBazel && !hasWorkspace) {
         lines.push(
           '  ⚠️ Workspace looks like process.cwd() and is not a Bazel root.',
-          '     Set BAZEL_IOS_WORKSPACE in MCP config or workspacePath in .xcodebazelmcp/config.yaml.',
+          '     Set BAZEL_IOS_WORKSPACE in MCP config, call bazel_ios_set_workspace, or add workspacePath to .xcodebazelmcp/config.yaml.',
+        );
+      } else if (config.workspaceAutoDiscovered) {
+        lines.push(
+          '  ℹ️ Workspace auto-discovered by walking up from cwd/env.',
+          '     Set BAZEL_IOS_WORKSPACE in MCP config to pin a specific repo.',
         );
       } else if (!process.env.BAZEL_IOS_WORKSPACE && !config.configFilePath) {
         lines.push('  ⚠️ BAZEL_IOS_WORKSPACE not set — using cwd or config file workspacePath.');

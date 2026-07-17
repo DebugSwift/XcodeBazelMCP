@@ -175,7 +175,7 @@ describe('getConfig', () => {
     setWorkspace(tempDir);
     const config = getConfig();
     expect(config.workspacePath).toBe(tempDir);
-    expect(config.bazelPath).toBe('bazel');
+    expect(config.bazelPath).toMatch(/bazel(isk)?$/);
   });
 
   it('loads config from workspace .xcodebazelmcp directory', () => {

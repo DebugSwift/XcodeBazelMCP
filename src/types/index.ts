@@ -60,6 +60,8 @@ export interface RuntimeConfig {
   bazelPath: string;
   maxOutput: number;
   configFilePath?: string;
+  /** True when workspace was inferred by walking up from cwd/env (not explicitly set). */
+  workspaceAutoDiscovered?: boolean;
   defaults: SessionDefaults;
   activeProfile?: string;
   profiles: Record<string, ProfileConfig>;

@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { assertBazelWorkspace, readBspStatus } from './workspace.js';
+import { assertBazelWorkspace, discoverBazelWorkspace, isBazelWorkspace, readBspStatus } from './workspace.js';
 
 const dirs: string[] = [];
 function makeTmp(): string {
@@ -14,6 +14,30 @@ function makeTmp(): string {
 afterEach(() => {
   for (const d of dirs) rmSync(d, { recursive: true, force: true });
   dirs.length = 0;
+});
+
+describe('isBazelWorkspace', () => {
+  it('returns true when MODULE.bazel exists', () => {
+    const tmp = makeTmp();
+    writeFileSync(join(tmp, 'MODULE.bazel'), 'module(name = "test")');
+    expect(isBazelWorkspace(tmp)).toBe(true);
+  });
+
+  it('returns false for a plain directory', () => {
+    const tmp = makeTmp();
+    expect(isBazelWorkspace(tmp)).toBe(false);
+  });
+});
+
+describe('discoverBazelWorkspace', () => {
+  it('walks up from a nested directory to find the Bazel root', () => {
+    const root = makeTmp();
+    const nested = join(root, 'Apps', 'Dasher', 'Tests');
+    mkdirSync(nested, { recursive: true });
+    writeFileSync(join(root, 'MODULE.bazel'), 'module(name = "test")');
+
+    expect(discoverBazelWorkspace([nested])).toBe(root);
+  });
 });
 
 describe('assertBazelWorkspace', () => {

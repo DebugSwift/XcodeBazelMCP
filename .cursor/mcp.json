@@ -4,7 +4,8 @@
       "command": "~/.nvm/versions/node/v20.19.2/bin/node",
       "args": ["~/Projects/XcodeBazelMCP/dist/cli.js", "mcp"],
       "env": {
-        "BAZEL_IOS_WORKSPACE": "~/Projects/XcodeBazelMCP/example_projects/BazelApp"
+        "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin",
+        "BAZEL_IOS_WORKSPACE": "~/Projects/ios-migration"
       }
     }
   }

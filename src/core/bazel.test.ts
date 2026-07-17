@@ -6,6 +6,7 @@ import type { CommandResult } from '../types/index.js';
 import { runCommand, runCommandStreaming } from '../utils/process.js';
 import {
   asStringArray,
+  bitriseAuthAvailable,
   buildCommandArgs,
   configArgs,
   discoverExpression,
@@ -18,8 +19,10 @@ import {
   requireLabel,
   sanitizeQueryExpression,
   simulatorArgs,
+  stripBitriseAuthFlags,
   testFilterArgs,
   tokenizeArgs,
+  withoutBitriseAuthConfigs,
   runBazel,
   runBazelStreaming,
   getLastCommand,
@@ -40,6 +43,8 @@ vi.mock('../utils/process.js', () => ({
 
 vi.mock('./workspace.js', () => ({
   assertBazelWorkspace: vi.fn(),
+  isBazelWorkspace: vi.fn(() => true),
+  discoverBazelWorkspace: vi.fn(),
 }));
 
 const mockRunCommand = vi.mocked(runCommand);
@@ -226,6 +231,32 @@ describe('Bazel argument helpers', () => {
 
     expect(configArgs(['test', 'debug.local'])).toEqual(['--config=test', '--config=debug.local']);
     expect(() => configArgs(['bad;config'])).toThrow('Invalid config value');
+  });
+
+  it('drops Bitrise RBE configs when BITRISE_BUILD_CACHE_AUTH_TOKEN is unset', () => {
+    delete process.env.BITRISE_BUILD_CACHE_AUTH_TOKEN;
+    expect(bitriseAuthAvailable()).toBe(false);
+    expect(withoutBitriseAuthConfigs(['local', 'bitrise', 'remote_linux', 'test'])).toEqual(['local', 'test']);
+    expect(configArgs(['bitrise', 'test'])).toEqual(['--config=test']);
+    expect(stripBitriseAuthFlags(['test', '--config=bitrise', '--jobs=1', '--config=remote_linux'])).toEqual([
+      'test',
+      '--jobs=1',
+    ]);
+    expect(
+      buildCommandArgs({
+        target: '//:MyApp',
+        configs: ['bitrise'],
+        extraArgs: ['--config=remote_linux', '--cache_test_results=no'],
+      }),
+    ).toEqual(['build', '--cache_test_results=no', '//:MyApp']);
+  });
+
+  it('keeps Bitrise RBE configs when BITRISE_BUILD_CACHE_AUTH_TOKEN is set', () => {
+    process.env.BITRISE_BUILD_CACHE_AUTH_TOKEN = 'test-token';
+    expect(bitriseAuthAvailable()).toBe(true);
+    expect(configArgs(['bitrise', 'test'])).toEqual(['--config=bitrise', '--config=test']);
+    expect(stripBitriseAuthFlags(['--config=bitrise'])).toEqual(['--config=bitrise']);
+    delete process.env.BITRISE_BUILD_CACHE_AUTH_TOKEN;
   });
 
   it('testFilterArgs returns single --test_filter for simple string', () => {
@@ -540,7 +571,7 @@ describe('runBazel', () => {
 
     await runBazel(['build', '//:MyApp']);
 
-    expect(mockRunCommand).toHaveBeenCalledWith('bazel', ['build', '//:MyApp'], {
+    expect(mockRunCommand).toHaveBeenCalledWith(expect.stringMatching(/bazel(isk)?$/), ['build', '//:MyApp'], {
       cwd: tempDir,
       timeoutSeconds: undefined,
       maxOutput: expect.any(Number),
@@ -553,7 +584,7 @@ describe('runBazel', () => {
 
     await runBazel(['build', '//:MyApp'], undefined, ['--host_jvm_args=-Xmx4g']);
 
-    expect(mockRunCommand).toHaveBeenCalledWith('bazel', ['--host_jvm_args=-Xmx4g', 'build', '//:MyApp'], expect.any(Object));
+    expect(mockRunCommand).toHaveBeenCalledWith(expect.stringMatching(/bazel(isk)?$/), ['--host_jvm_args=-Xmx4g', 'build', '//:MyApp'], expect.any(Object));
   });
 
   it('passes timeout', async () => {
@@ -561,7 +592,7 @@ describe('runBazel', () => {
 
     await runBazel(['build', '//:MyApp'], 300);
 
-    expect(mockRunCommand).toHaveBeenCalledWith('bazel', ['build', '//:MyApp'], expect.objectContaining({ timeoutSeconds: 300 }));
+    expect(mockRunCommand).toHaveBeenCalledWith(expect.stringMatching(/bazel(isk)?$/), ['build', '//:MyApp'], expect.objectContaining({ timeoutSeconds: 300 }));
   });
 
   it('respects BAZEL_IOS_STARTUP_ARGS env var', async () => {
@@ -570,7 +601,7 @@ describe('runBazel', () => {
 
     await runBazel(['build', '//:MyApp']);
 
-    expect(mockRunCommand).toHaveBeenCalledWith('bazel', ['--batch', '--noautodetect_server_javabase', 'build', '//:MyApp'], expect.any(Object));
+    expect(mockRunCommand).toHaveBeenCalledWith(expect.stringMatching(/bazel(isk)?$/), ['--batch', '--noautodetect_server_javabase', 'build', '//:MyApp'], expect.any(Object));
 
     delete process.env.BAZEL_IOS_STARTUP_ARGS;
   });
@@ -598,7 +629,7 @@ describe('runBazelStreaming', () => {
       chunks.push(chunk);
     }
 
-    expect(mockRunCommandStreaming).toHaveBeenCalledWith('bazel', ['build', '//:MyApp'], {
+    expect(mockRunCommandStreaming).toHaveBeenCalledWith(expect.stringMatching(/bazel(isk)?$/), ['build', '//:MyApp'], {
       cwd: tempDir,
       timeoutSeconds: undefined,
       maxOutput: expect.any(Number),
@@ -617,7 +648,7 @@ describe('runBazelStreaming', () => {
       chunks.push(chunk);
     }
 
-    expect(mockRunCommandStreaming).toHaveBeenCalledWith('bazel', ['--batch', 'test', '//:Tests'], expect.any(Object));
+    expect(mockRunCommandStreaming).toHaveBeenCalledWith(expect.stringMatching(/bazel(isk)?$/), ['--batch', 'test', '//:Tests'], expect.any(Object));
   });
 
   it('stores final result in lastCommand', async () => {
