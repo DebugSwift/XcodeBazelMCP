@@ -1,4 +1,4 @@
-import { accessSync, constants, existsSync } from 'node:fs';
+import { accessSync, constants } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
