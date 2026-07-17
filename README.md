@@ -191,6 +191,7 @@ DoorDash's `ios` repo defines `--config=bitrise` and `--config=remote_linux` for
 
 **You do not need the token for local simulator builds/tests.** If an agent (or `extraArgs`) passes `--config=bitrise` without the token, XcodeBazelMCP automatically drops the Bitrise config flags and runs locally. Set the token only when you intentionally want RBE offload.
 
+## CLI Examples
 
 ```sh
 # Health check
